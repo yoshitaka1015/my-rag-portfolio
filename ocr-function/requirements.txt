@@ -1,0 +1,8 @@
+# requirements.txt
+functions-framework==3.*
+google-cloud-storage
+pandas
+PyMuPDF
+google-cloud-aiplatform
+langchain-core
+langchain-text-splitters
