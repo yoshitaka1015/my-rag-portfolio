@@ -1,0 +1,36 @@
+# .github/workflows/test-on-pr.yml
+
+name: Run Tests on Pull Request
+
+# このワークフローのトリガー
+on:
+  pull_request:
+    branches:
+    - main # mainブランチへのプルリクエストが作成・更新された時
+    paths:
+    - 'app.**' # appディレクトリのファイルに変更があった時のみ
+
+jobs:
+  #　テスト実行するジョブ
+  test:
+    runs-on: ubuntu-latest # ubuntuの仮想環境で実行
+    steps:
+      # リポジトリのコードをチェックアウト
+      - name: Checkout code
+        uses: actions/checkout@v4
+            
+      # Python 3.11環境をセットアップ
+      - name : Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+            
+      # 依存ライブラリをインストール
+      - name: Install dependenies
+        run: |
+          pip install -r requirements-dev.txt
+          pip install -r app/requirements.txt
+            
+      # Pytestを実行
+      - name: Run unit tests
+        run: python3 -m pytest
