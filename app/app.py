@@ -77,37 +77,32 @@ def generate_answer(query, similar_chunks):
 
 # --- 3. Streamlit UI ---
 
-st.set_page_config(page_title="RAG Portfolio", layout="wide")
-st.title("RAGシステム ポートフォリオ")
+if __name__ == "__main__":
+    st.set_page_config(page_title="RAG Portfolio", layout="wide")
+    st.title("📄 RAGシステム ポートフォリオ")
 
-# GCSからベクトルデータをロード
-with st.spinner("GCSから知識ベースを読み込み中..."):
-    texts, embeddings = load_vectors_from_gcs()
+    with st.spinner("GCSから知識ベースを読み込み中..."):
+        texts, embeddings = load_vectors_from_gcs()
 
-if embeddings is None:
-    st.error("GCSバケットにベクトルデータが見つかりません。Cloud Functionでドキュメントを処理してください。")
-else:
-    st.success(f"{len(texts)}個のナレッジチャンクをGCSからロードしました。")
+    if embeddings is None:
+        st.error("GCSバケットにベクトルデータが見つかりません。Cloud Functionでドキュメントを処理してください。")
+    else:
+        st.success(f"{len(texts)}個のナレッジチャンクをGCSからロードしました。")
 
-    query = st.text_input("ドキュメントに関する質問を入力してください:", key="query_input")
+        query = st.text_input("ドキュメントに関する質問を入力してください:", key="query_input")
 
-    if st.button("質問する", key="submit_button"):
-        if query:
-            with st.spinner("回答を生成中です..."):
-                # 1. 質問をベクトル化
-                query_embedding = embedding_model.get_embeddings([query])[0].values
+        if st.button("質問する", key="submit_button"):
+            if query:
+                with st.spinner("回答を生成中です..."):
+                    query_embedding = embedding_model.get_embeddings([query])[0].values
+                    similar_chunks = find_similar_chunks(query_embedding, embeddings, texts)
+                    answer = generate_answer(query, similar_chunks)
+                    
+                    st.subheader("🤖 回答:")
+                    st.write(answer)
 
-                # 2. 類似チャンクを検索
-                similar_chunks = find_similar_chunks(query_embedding, embeddings, texts)
-                
-                # 3. LLMで回答を生成
-                answer = generate_answer(query, similar_chunks)
-                
-                st.subheader("🤖 回答:")
-                st.write(answer)
-
-                with st.expander("AIが参考にした情報源を表示"):
-                    for chunk in similar_chunks:
-                        st.info(chunk)
-        else:
-            st.error("質問を入力してください。")
+                    with st.expander("AIが参考にした情報源を表示"):
+                        for chunk in similar_chunks:
+                            st.info(chunk)
+            else:
+                st.error("質問を入力してください。")
