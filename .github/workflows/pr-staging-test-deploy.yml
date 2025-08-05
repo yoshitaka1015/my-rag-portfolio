@@ -1,0 +1,82 @@
+# .github/workflows/pr-staging-test-deploy.yml
+
+name: Test and Deploy Preview Environment
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'app/**'
+      - 'ocr-function/**'
+      - 'terraform/**'
+      - 'requirements-dev.txt'
+      - '.github/workflows/pr-staging-test-deploy.yml'
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+jobs:
+  # --- Job 1: テスト ---
+  test:
+    name: Run Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          pip install -r requirements-dev.txt
+          pip install -r app/requirements.txt
+      - name: Run unit tests
+        run: python3 -m pytest
+
+  # --- Job 2: デプロイ ---
+  deploy-preview:
+    name: Deploy Preview to Staging
+    needs: test # testジョブが成功したら、このジョブを開始
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: 'projects/150327319937/locations/global/workloadIdentityPools/github-pool/providers/github-provider'
+          service_account: 'github-actions-runner@serious-timer-467517-e1.iam.gserviceaccount.com'
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Deploy to Staging
+        run: |
+          cd terraform
+          terraform init
+          terraform workspace select staging
+          terraform apply -var-file="staging.tfvars" -auto-approve
+      
+      - name: Get Preview URL and Comment on PR
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { exec } = require('child_process');
+            exec('cd terraform && terraform output -raw rag_app_url', (error, stdout, stderr) => {
+              if (error) {
+                console.error(`exec error: ${error}`);
+                return;
+              }
+              const url = stdout.trim();
+              github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: `🚀 **Preview Environment Deployed!**\n\nAccess it here: ${url}`
+              });
+            });

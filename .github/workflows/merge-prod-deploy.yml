@@ -1,0 +1,47 @@
+# .github/workflows/merge-prod-deploy.yml
+
+name: Deploy to Production on Merge
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'app/**'
+      - 'ocr-function/**'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy-prod:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: 'projects/150327319937/locations/global/workloadIdentityPools/github-pool/providers/github-provider'
+          service_account: 'github-actions-runner@serious-timer-467517-e1.iam.gserviceaccount.com'
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build and Deploy Applications
+        run: |
+          # アプリケーションのコンテナをビルド＆プッシュ
+          gcloud builds submit ./app --tag asia-northeast1-docker.pkg.dev/serious-timer-467517-e1/my-app-repo/rag-app:prod-${{ github.sha }}
+          
+          # Cloud Runサービスを新しいイメージで更新
+          gcloud run deploy rag-portfolio-app-prod \
+            --image asia-northeast1-docker.pkg.dev/serious-timer-467517-e1/my-app-repo/rag-app:prod-${{ github.sha }} \
+            --region asia-northeast1 \
+            --service-account rag-app-sa-prod@serious-timer-467517-e1.iam.gserviceaccount.com
+
+          # (OCR Functionも同様にビルド＆デプロイ)
+          # gcloud builds submit ./ocr-function ...
+          # gcloud functions deploy ocr-function-prod ...

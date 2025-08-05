@@ -1,0 +1,41 @@
+# .github/workflows/pr-staging-destroy.yml
+
+name: Destroy Preview Environment on PR Close
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  destroy-preview:
+    name: Destroy Preview from Staging
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: 'projects/150327319937/locations/global/workloadIdentityPools/github-pool/providers/github-provider'
+          service_account: 'github-actions-runner@serious-timer-467517-e1.iam.gserviceaccount.com'
+          
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform init
+        working-directory: ./terraform
+        
+      - name: Terraform Workspace Select
+        run: terraform workspace select staging
+        working-directory: ./terraform
+
+      - name: Terraform Destroy
+        run: terraform destroy -var-file="staging.tfvars" -auto-approve
+        working-directory: ./terraform
