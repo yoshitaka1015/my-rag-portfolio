@@ -4,6 +4,7 @@
 resource "google_cloud_run_v2_service" "rag_app" {
   name     = "rag-portfolio-app-${var.environment}"
   location = var.region
+  deletion_protection = false # この設定を確認・追加
 
   template {
     service_account = google_service_account.rag_app_sa.email

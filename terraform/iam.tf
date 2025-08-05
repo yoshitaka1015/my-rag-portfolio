@@ -41,3 +41,10 @@ resource "google_project_iam_member" "rag_app_sa_roles" {
 
   depends_on = [google_service_account.rag_app_sa]
 }
+
+# Eventarcサービスエージェントに、ソースバケットを直接読み取る権限を付与
+resource "google_storage_bucket_iam_member" "eventarc_can_read_source_bucket" {
+  bucket = google_storage_bucket.source.name
+  role   = "roles/storage.objectViewer" # ← 正しいロールに修正
+  member = "serviceAccount:service-${data.google_project.project.number}@gcp-sa-eventarc.iam.gserviceaccount.com"
+}

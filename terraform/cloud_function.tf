@@ -1,17 +1,20 @@
 # terraform/cloud_function.tf
 
+# FunctionのソースコードをZIP化
 data "archive_file" "source" {
   type        = "zip"
   source_dir  = "../ocr-function"
   output_path = "/tmp/ocr-function.zip"
 }
 
+# ZIPファイルをGCSにアップロード
 resource "google_storage_bucket_object" "source_zip" {
   name   = "source/ocr-function-${var.environment}-${data.archive_file.source.output_md5}.zip"
   bucket = google_storage_bucket.source.name
   source = data.archive_file.source.output_path
 }
 
+# Cloud Function 本体
 resource "google_cloudfunctions2_function" "ocr_function" {
   name     = "${var.function_name}-${var.environment}"
   location = var.region
@@ -46,6 +49,7 @@ resource "google_cloudfunctions2_function" "ocr_function" {
     }
   }
 
+  # API有効化、ZIPアップロード、そして全ての関連権限付与が完了するのを待つ
   depends_on = [
     google_project_service.apis,
     google_storage_bucket_object.source_zip,
