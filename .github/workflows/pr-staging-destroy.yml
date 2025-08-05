@@ -33,7 +33,7 @@ jobs:
         working-directory: ./terraform
         
       - name: Terraform Workspace Select
-        run: terraform workspace select staging
+        run: terraform workspace select staging || terraform workspace new staging
         working-directory: ./terraform
 
       - name: Terraform Destroy
