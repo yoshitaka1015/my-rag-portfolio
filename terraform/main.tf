@@ -17,7 +17,8 @@ resource "google_project_service" "apis" {
     "eventarc.googleapis.com",
     "logging.googleapis.com",
     "pubsub.googleapis.com",
-    "aiplatform.googleapis.com"
+    "aiplatform.googleapis.com",
+    "cloudresourcemanager.googleapis.com"
   ])
   project            = var.project_id
   service            = each.key
