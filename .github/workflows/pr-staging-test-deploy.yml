@@ -54,11 +54,11 @@ jobs:
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
 
-      - name: Terraform Deploy to Staging
+      - name: Select or Create Terraform Workspace
         run: |
           cd terraform
           terraform init
-          terraform workspace select staging
+          terraform workspace select staging || terraform workspace new staging
           terraform apply -var-file="staging.tfvars" -auto-approve
       
       - name: Get Preview URL and Comment on PR

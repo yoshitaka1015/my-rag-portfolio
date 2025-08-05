@@ -4,7 +4,7 @@ import json
 from google.cloud import storage
 import vertexai
 from vertexai.language_models import TextEmbeddingModel
-from vertexai.generative_models import GenerativeModel, Part
+from vertexai.generative_models import GenerativeModel
 
 # -----------------------------------------------------------------------------
 # ユニットテスト対象の純粋な関数
@@ -49,7 +49,8 @@ def main():
         return
 
     # --- 関数の定義 ---
-    # @st.cache_data(show_spinner=False)
+    # @st.cache_dataは、一度読み込んだGCSのデータをキャッシュしてアプリを高速化します
+    @st.cache_data(show_spinner=False)
     def load_vectors_from_gcs():
         """GCSから全てのJSONLファイルを読み込み、ベクトルとテキストをロードする"""
         bucket = storage_client.bucket(VECTOR_BUCKET_NAME)
@@ -71,3 +72,53 @@ def main():
             
         texts = [chunk['text_content'] for chunk in all_chunks]
         embeddings = np.array([chunk['embedding'] for chunk in all_chunks])
+        
+        return texts, embeddings
+
+    def generate_answer(query, similar_chunks):
+        """LLMを使って回答を生成する"""
+        context = "\n---\n".join(similar_chunks)
+        prompt = f"""
+        以下の情報を参考にして、質問に日本語で詳しく回答してください。
+
+        --- 情報 ---
+        {context}
+        --- 情報終わり ---
+
+        質問: {query}
+        """
+        response = generative_model.generate_content([prompt])
+        return response.text
+
+    # --- 3. Streamlit UI ---
+    st.set_page_config(page_title="RAG Portfolio", layout="wide")
+    st.title("📄 RAGシステム ポートフォリオ")
+
+    with st.spinner("GCSから知識ベースを読み込み中..."):
+        texts, embeddings = load_vectors_from_gcs()
+
+    if embeddings is None:
+        st.error("GCSバケットにベクトルデータが見つかりません。Cloud Functionでドキュメントを処理してください。")
+    else:
+        st.success(f"{len(texts)}個のナレッジチャンクをGCSからロードしました。")
+        query = st.text_input("ドキュメントに関する質問を入力してください:", key="query_input")
+
+        if st.button("質問する", key="submit_button"):
+            if query:
+                with st.spinner("回答を生成中です..."):
+                    query_embedding = embedding_model.get_embeddings([query])[0].values
+                    similar_chunks = find_similar_chunks(query_embedding, embeddings, texts)
+                    answer = generate_answer(query, similar_chunks)
+                    
+                    st.subheader("🤖 回答:")
+                    st.write(answer)
+
+                    with st.expander("AIが参考にした情報源を表示"):
+                        for chunk in similar_chunks:
+                            st.info(chunk)
+            else:
+                st.error("質問を入力してください。")
+
+# このファイルが "streamlit run app.py" で直接実行された時だけ、main()関数を呼び出す
+if __name__ == "__main__":
+    main()
