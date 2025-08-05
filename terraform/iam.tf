@@ -48,3 +48,15 @@ resource "google_storage_bucket_iam_member" "eventarc_can_read_source_bucket" {
   role   = "roles/storage.objectViewer" # ← 正しいロールに修正
   member = "serviceAccount:service-${data.google_project.project.number}@gcp-sa-eventarc.iam.gserviceaccount.com"
 }
+
+# IAM権限がGCP全体に反映されるのを待つための、60秒の待機時間
+resource "time_sleep" "wait_for_iam_propagation" {
+  create_duration = "60s"
+
+  # すべてのIAM権限設定が完了してから、待機を開始する
+  depends_on = [
+    google_project_iam_member.gcs_to_pubsub,
+    google_project_iam_member.eventarc_service_agent,
+    google_project_iam_member.rag_app_sa_roles
+  ]
+}

@@ -53,7 +53,6 @@ resource "google_cloudfunctions2_function" "ocr_function" {
   depends_on = [
     google_project_service.apis,
     google_storage_bucket_object.source_zip,
-    google_project_iam_member.gcs_to_pubsub,      # 正しいリソース名に修正
-    google_project_iam_member.eventarc_service_agent # 正しいリソース名に修正
+    time_sleep.wait_for_iam_propagation
   ]
 }
