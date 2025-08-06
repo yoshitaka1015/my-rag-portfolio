@@ -57,7 +57,7 @@ jobs:
       - name: Select or Create Terraform Workspace
         run: |
           cd terraform
-          terraform init -migrate-state
+          terraform init -input=false -reconfigure
           terraform workspace select staging || terraform workspace new staging
           terraform apply -var-file="staging.tfvars" -auto-approve
       
