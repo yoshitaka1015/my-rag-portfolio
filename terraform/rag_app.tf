@@ -14,6 +14,9 @@ resource "google_cloud_run_v2_service" "rag_app" {
       ports {
         container_port = 8080
       }
+      env {
+        name  = "VECTOR_BUCKET_NAME"
+        value = google_storage_bucket.output.name
     }
   }
 

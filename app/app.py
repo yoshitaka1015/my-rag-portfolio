@@ -34,7 +34,7 @@ def main():
     # --- 1. 定数と設定 ---
     PROJECT_ID = "serious-timer-467517-e1"
     REGION = "asia-northeast1"
-    VECTOR_BUCKET_NAME = "bkt-serious-timer-467517-e1-rag-output"
+    VECTOR_BUCKET_NAME = os.environ.get("VECTOR_BUCKET_NAME")
     EMBEDDING_MODEL_NAME = "text-embedding-004"
     LLM_MODEL_NAME = "gemini-1.5-pro" # 最新の安定版モデルを使用
 
