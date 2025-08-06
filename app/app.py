@@ -5,6 +5,7 @@ from google.cloud import storage
 import vertexai
 from vertexai.language_models import TextEmbeddingModel
 from vertexai.generative_models import GenerativeModel
+import os # ← この行を追加
 
 # -----------------------------------------------------------------------------
 # ユニットテスト対象の純粋な関数
@@ -53,6 +54,10 @@ def main():
     @st.cache_data(show_spinner=False)
     def load_vectors_from_gcs():
         """GCSから全てのJSONLファイルを読み込み、ベクトルとテキストをロードする"""
+        if not VECTOR_BUCKET_NAME:
+            st.error("環境変数 VECTOR_BUCKET_NAME が設定されていません。")
+            return None, None
+
         bucket = storage_client.bucket(VECTOR_BUCKET_NAME)
         blobs = list(bucket.list_blobs())
         

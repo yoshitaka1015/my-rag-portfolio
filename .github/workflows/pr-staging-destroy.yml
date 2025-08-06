@@ -37,5 +37,5 @@ jobs:
         working-directory: ./terraform
 
       - name: Terraform Destroy
-        run: terraform destroy -var-file="staging.tfvars" -auto-approve
+        run: terraform destroy -var-file="staging.tfvars" -auto-approve -refresh=false
         working-directory: ./terraform
