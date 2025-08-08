@@ -20,32 +20,43 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: 'projects/150327319937/locations/global/workloadIdentityPools/github-pool/providers/github-provider'
           service_account: 'github-actions-runner@serious-timer-467517-e1.iam.gserviceaccount.com'
+
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
+
       - name: Terraform Deploy to Staging
         run: |
           cd terraform
           terraform init -input=false -reconfigure
           terraform workspace select staging || terraform workspace new staging
           terraform apply -var-file="staging.tfvars" -auto-approve
-      - name: Get Preview URL and Comment on PR
+      
+      # --- ▼ここからが修正箇所▼ ---
+
+      # ステップ1: Terraformの出力を取得し、ステップの出力変数に設定する
+      - name: Get Preview URL
+        id: get_url
+        run: |
+          cd terraform
+          echo "app_url=$(terraform output -raw rag_app_url)" >> $GITHUB_OUTPUT
+        
+      # ステップ2: 取得したURLを使って、PRにコメントを投稿する
+      - name: Post Preview URL to PR Comment
         if: success()
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const { exec } = require('@actions/exec');
-            let url = '';
-            const options = { listeners: { stdout: (data) => { url += data.toString(); } } };
-            await exec('terraform', ['output', '-raw', 'rag_app_url'], { ...options, cwd: './terraform' });
+            const url = "${{ steps.get_url.outputs.app_url }}";
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: `🚀 **Infrastructure Preview Deployed!**\n\nAccess it here: ${url.trim()}`
+              body: `🚀 **Infrastructure Preview Deployed!**\n\nAccess it here: ${url}`
             });
