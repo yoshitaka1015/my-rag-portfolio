@@ -99,10 +99,6 @@ def main():
     st.set_page_config(page_title="RAG Portfolio", layout="wide")
     st.title("📄 RAGシステム ポートフォリオ")
 
-    st.subheader("Debug Info:")
-    st.write(f"読み込まれたバケット名: `{os.environ.get('VECTOR_BUCKET_NAME')}`")
-    st.divider()
-
     with st.spinner("GCSから知識ベースを読み込み中..."):
         texts, embeddings = load_vectors_from_gcs()
 

@@ -9,7 +9,7 @@ on:
       - 'app/**'
       - 'ocr-function/**'
       - 'requirements-dev.txt'
-      - '.github/workflows/pr-app-pipeline.yml'
+      - '.github/workflows/pr-staging-apptest-deploy.yml'
 
 permissions:
   contents: read
