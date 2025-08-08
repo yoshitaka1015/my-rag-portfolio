@@ -5,7 +5,7 @@ from google.cloud import storage
 import vertexai
 from vertexai.language_models import TextEmbeddingModel
 from vertexai.generative_models import GenerativeModel
-import os # ← この行を追加
+import os
 
 # -----------------------------------------------------------------------------
 # ユニットテスト対象の純粋な関数
