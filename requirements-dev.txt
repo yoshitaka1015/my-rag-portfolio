@@ -1,0 +1,7 @@
+# requirements-dev.txt
+
+# テストフレームワーク
+pytest
+
+# 型チェックツール (品質向上のため)
+mypy

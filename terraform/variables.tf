@@ -1,27 +1,36 @@
-# variable.tf
+# 変数定義（環境差分は environment で切り替える）
+
 variable "project_id" {
   type        = string
-  description = "GCPのプロジェクトID"
+  description = "GCP のプロジェクト ID"
+  default     = "serious-timer-467517-e1"
 }
 
 variable "region" {
   type        = string
-  description = "リソースを作成するGCPのリージョン"
-  default     = "asia-northeast1" # asia-northeast1 から変更
+  description = "GCP のリージョン（Cloud Run / Eventarc など）"
+  default     = "us-central1"
 }
 
 variable "source_bucket_name" {
   type        = string
-  description = "入力用GCSバケットの名前"
+  description = "OCR 入力用バケットのベース名（環境サフィックスは自動付与）"
+  default     = "bkt-serious-timer-467517-e1-rag-source"
 }
 
 variable "output_bucket_name" {
   type        = string
-  description = "出力用GCSバケットの名前"
+  description = "OCR 出力 / ベクトルデータ用バケットのベース名（環境サフィックスは自動付与）"
+  default     = "bkt-serious-timer-467517-e1-rag-output"
 }
 
 variable "function_name" {
   type        = string
-  description = "Cloud Functionの名前"
-  default     = "ocr-function-iac"
+  description = "OCR 用 Cloud Run サービスのベース名"
+  default     = "ocr-function"
+}
+
+variable "environment" {
+  type        = string
+  description = "環境名（例: staging / prod）"
 }
