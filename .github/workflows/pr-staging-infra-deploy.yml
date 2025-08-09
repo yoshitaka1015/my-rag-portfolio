@@ -1,27 +1,32 @@
-# PR作成/更新でstaging用インフラを適用（Terraform）
-# - workspaceをPR番号で分離
-# - region / project_id を明示で注入
+# PRでTerraformのインフラを適用するワークフロー
+# - WIFでGCPに認証
+# - PRごとにTerraform Workspaceを作成（pr-<番号>）
+# - tfvarsはstagingを使用（環境名などの既定を一元管理）
+# - us-central1 / serious-timer-467517-e1 に統一
 
 name: Deploy Infrastructure to Staging on PR
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-    branches:
-      - "**"
+    paths:
+      - 'terraform/**'
+
+permissions:
+  contents: read            # checkout用
+  id-token: write           # WIF用
 
 env:
   PROJECT_ID: serious-timer-467517-e1
   REGION: us-central1
 
-permissions:
-  contents: read
-  id-token: write
-
 jobs:
   deploy-infra-preview:
     name: Terraform Apply (staging infra)
     runs-on: ubuntu-latest
+
+    # 外部フォークやDependabotはSecretsが渡らないため安全のためスキップ
+    if: ${{ github.event.pull_request.head.repo.fork == false && github.actor != 'dependabot[bot]' }}
 
     concurrency:
       group: tf-staging-${{ github.event.pull_request.number }}
@@ -31,7 +36,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Auth to Google Cloud (Workload Identity Federation)
+      - name: Auth to Google Cloud (WIF)
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDP }}
@@ -54,7 +59,35 @@ jobs:
           || terraform -chdir=terraform workspace new pr-${{ github.event.pull_request.number }}
 
       - name: Terraform Plan
-        run: terraform -chdir=terraform plan -input=false -var="region=${{ env.REGION }}" -var="project_id=${{ env.PROJECT_ID }}"
+        run: terraform -chdir=terraform plan -input=false \
+          -var="project_id=${{ env.PROJECT_ID }}" \
+          -var="region=${{ env.REGION }}" \
+          -var-file="staging.tfvars"
 
       - name: Terraform Apply
-        run: terraform -chdir=terraform apply -auto-approve -input=false -var="region=${{ env.REGION }}" -var="project_id=${{ env.PROJECT_ID }}"
+        run: terraform -chdir=terraform apply -auto-approve -input=false \
+          -var="project_id=${{ env.PROJECT_ID }}" \
+          -var="region=${{ env.REGION }}" \
+          -var-file="staging.tfvars"
+
+      # Cloud RunのURLなどを取得してPRにコメント（存在すれば）
+      - name: Get RAG app URL (optional)
+        id: get_url
+        continue-on-error: true
+        run: |
+          terraform -chdir=terraform output -raw rag_app_url > url.txt
+          echo "app_url=$(cat url.txt)" >> $GITHUB_OUTPUT
+
+      - name: Comment URL to PR
+        if: steps.get_url.outputs.app_url != ''
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const url = `${{ steps.get_url.outputs.app_url }}`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `Preview deployed: ${url}`
+            });

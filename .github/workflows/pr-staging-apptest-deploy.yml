@@ -1,8 +1,9 @@
-# PR時にユニットテストを実行し、成功時はステージング環境へデプロイする
-# - コンテナはArtifact Registryにpush（digest取得）
-# - Cloud Runへはdigest指定で同期デプロイ（sleep不要）
-# - ステージングも公開（--allow-unauthenticated）
-# - テスト時は PYTHONPATH にリポジトリルートを通して import を安定化
+# PRでアプリのテスト→ビルド→Artifact Registryにpush→
+# digestでCloud Runに同期デプロイするワークフロー
+# - PYTHONPATHを通して import を安定化
+# - us-central1 / rag-portfolio-repo に統一
+# - ステージングは公開（--allow-unauthenticated）
+# - ランタイムSAを明示（--service-account）
 
 name: Test and Update Application on PR
 
@@ -12,20 +13,21 @@ on:
     branches:
       - "**"
 
+permissions:
+  contents: read
+  id-token: write
+
 env:
   PROJECT_ID: serious-timer-467517-e1
   REGION: us-central1
   REPO: rag-portfolio-repo
-
-permissions:
-  contents: read
-  id-token: write
+  RUNTIME_SA_STAGING: rag-app-sa-staging@serious-timer-467517-e1.iam.gserviceaccount.com
 
 jobs:
   test:
     name: Run Unit Tests
     runs-on: ubuntu-latest
-    # リポジトリ直下を import 対象にする（例: from app.app import ...）
+    # リポジトリ直下をPythonの検索パスに追加
     env:
       PYTHONPATH: ${{ github.workspace }}
     steps:
@@ -91,8 +93,8 @@ jobs:
         id: build
         uses: docker/build-push-action@v5
         with:
-          context: ${{ matrix.context }}
-          push: true
+          context: ${{ matrix.context }}                                  # 各サービスのDockerコンテキスト
+          push: true                                                      # pushしてdigestを確定
           tags: |
             ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ matrix.image_name }}:sha-${{ github.sha }}
 
@@ -103,10 +105,10 @@ jobs:
         id: deploy
         uses: google-github-actions/deploy-cloudrun@v2
         with:
-          service: ${{ matrix.service }}
+          service: ${{ matrix.service }}                                  # 例: rag-portfolio-app-staging
           region: ${{ env.REGION }}
           image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ matrix.image_name }}@${{ steps.build.outputs.digest }}
-          flags: --allow-unauthenticated
+          flags: --allow-unauthenticated --service-account=${{ env.RUNTIME_SA_STAGING }}
 
       - name: Show Service URL
         run: echo "Deployed ${{ matrix.service }} -> ${{ steps.deploy.outputs.url }}"

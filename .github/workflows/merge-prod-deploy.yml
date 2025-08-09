@@ -1,26 +1,31 @@
-# mainへのpush（=マージ）で本番デプロイ
-# - digest指定の同期デプロイ
-# - prodは公開（未認証アクセス許可）
+# main へのpushで本番にデプロイするワークフロー
+# - digestでCloud Runに同期デプロイ
+# - us-central1 / rag-portfolio-repo に統一
+# - 本番も公開（--allow-unauthenticated）
+# - 実行SAは prod 用を明示
 
 name: Deploy to Production on Merge
 
 on:
   push:
-    branches:
-      - main
-
-env:
-  PROJECT_ID: serious-timer-467517-e1
-  REGION: us-central1
-  REPO: rag-portfolio-repo
+    branches: [ main ]
+    paths:
+      - 'app/**'
+      - 'ocr-function/**'
+      - '.github/workflows/merge-prod-deploy.yml'
 
 permissions:
   contents: read
   id-token: write
 
+env:
+  PROJECT_ID: serious-timer-467517-e1
+  REGION: us-central1
+  REPO: rag-portfolio-repo
+  RUNTIME_SA_PROD: rag-app-sa-prod@serious-timer-467517-e1.iam.gserviceaccount.com
+
 jobs:
-  deploy-prod:
-    name: Build, Push (digest) and Deploy to Prod
+  deploy:
     runs-on: ubuntu-latest
 
     strategy:
@@ -37,7 +42,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Auth to Google Cloud (Workload Identity Federation)
+      - name: Auth to Google Cloud (WIF)
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDP }}
@@ -61,9 +66,6 @@ jobs:
           tags: |
             ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ matrix.image_name }}:sha-${{ github.sha }}
 
-      - name: Echo digest (debug)
-        run: echo "Digest=${{ steps.build.outputs.digest }}"
-
       - name: Deploy to Cloud Run (by digest)
         id: deploy
         uses: google-github-actions/deploy-cloudrun@v2
@@ -71,7 +73,7 @@ jobs:
           service: ${{ matrix.service }}
           region: ${{ env.REGION }}
           image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ matrix.image_name }}@${{ steps.build.outputs.digest }}
-          flags: --allow-unauthenticated                                  # prodは公開
+          flags: --allow-unauthenticated --service-account=${{ env.RUNTIME_SA_PROD }}
 
       - name: Show Service URL
         run: echo "Deployed ${{ matrix.service }} -> ${{ steps.deploy.outputs.url }}"
