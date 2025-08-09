@@ -1,32 +1,61 @@
-# .github/workflows/pr-staging-destroy.yml
+# PRクローズ時にstaging用インフラを破棄（Terraform）
+# - workspaceはPR番号で特定
+# - destroy後にworkspaceを削除
 
 name: Destroy Preview Environment on PR Close
 
 on:
   pull_request:
     types: [closed]
+    branches:
+      - "**"
+
+env:
+  PROJECT_ID: serious-timer-467517-e1
+  REGION: us-central1
 
 permissions:
-  id-token: write
   contents: read
+  id-token: write
 
 jobs:
   destroy-preview:
-    name: Destroy Preview from Staging
+    name: Terraform Destroy (staging infra)
     runs-on: ubuntu-latest
+
+    concurrency:
+      group: tf-staging-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
-      - name: Authenticate to Google Cloud
+
+      - name: Auth to Google Cloud (Workload Identity Federation)
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: 'projects/150327319937/locations/global/workloadIdentityPools/github-pool/providers/github-provider'
-          service_account: 'github-actions-runner@serious-timer-467517-e1.iam.gserviceaccount.com'
-      - name: Set up Terraform
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDP }}
+          service_account: ${{ secrets.GCP_SA_EMAIL }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
-      - name: Terraform Destroy Staging
+        with:
+          terraform_version: 1.7.5
+
+      - name: Terraform Init
+        run: terraform -chdir=terraform init -input=false
+
+      - name: Select Workspace (per PR)
+        run: terraform -chdir=terraform workspace select pr-${{ github.event.pull_request.number }}
+
+      - name: Terraform Destroy
+        run: terraform -chdir=terraform destroy -auto-approve -input=false -var="region=${{ env.REGION }}" -var="project_id=${{ env.PROJECT_ID }}"
+
+      - name: Delete Workspace (cleanup)
+        if: always()
         run: |
-          cd terraform
-          terraform init -input=false -reconfigure
-          terraform workspace select staging
-          terraform destroy -var-file="staging.tfvars" -auto-approve
+          terraform -chdir=terraform workspace select default
+          terraform -chdir=terraform workspace delete -force pr-${{ github.event.pull_request.number }}

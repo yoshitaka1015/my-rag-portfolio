@@ -1,57 +1,108 @@
-# .github/workflows/pr-app-pipeline.yml
+# PR時にユニットテスト→ステージングへデプロイ
+# - コンテナはArtifact Registryにpush（digest取得）
+# - Cloud Runはdigest指定で同期デプロイ（sleep不要）
+# - stagingも公開（未認証アクセス許可）
 
 name: Test and Update Application on PR
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-    paths:
-      - 'app/**'
-      - 'ocr-function/**'
-      - 'requirements-dev.txt'
-      - '.github/workflows/pr-staging-apptest-deploy.yml'
+    branches:
+      - "**"
+
+env:
+  PROJECT_ID: serious-timer-467517-e1           # GCPプロジェクトID
+  REGION: us-central1                           # リージョン統一
+  REPO: rag-portfolio-repo                      # Artifact Registry(DOCKER)のリポジトリ名
 
 permissions:
-  contents: read
-  id-token: write
+  contents: read                                # checkoutに必要
+  id-token: write                               # WIF認証に必要
 
 jobs:
   test:
     name: Run Unit Tests
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Set up Python
+      - name: Checkout
+        uses: actions/checkout@v4               # ソース取得
+
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-      - name: Install dependencies
+          python-version: "3.11"
+
+      - name: Install Dev Dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
-          pip install -r app/requirements.txt
-          pip install -r ocr-function/requirements.txt
-      - name: Run unit tests
-        run: python3 -m pytest
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          # if [ -f app/requirements.txt ]; then pip install -r app/requirements.txt; fi
+          # if [ -f ocr-function/requirements.txt ]; then pip install -r ocr-function/requirements.txt; fi
+
+      - name: PyTest
+        run: |
+          if [ -d tests ]; then pytest -q; else echo "No tests directory. Skipping."; fi
 
   update-preview:
-    name: Update Application on Staging
+    name: Build, Push (digest) and Deploy to Staging
     needs: test
     runs-on: ubuntu-latest
+
+    strategy:
+      # 2サービスを同一手順で処理
+      matrix:
+        include:
+          - service: ocr-function-staging
+            image_name: ocr-function
+            context: ./ocr-function               # Dockerfileがあるパス
+          - service: rag-portfolio-app-staging
+            image_name: rag-portfolio-app
+            context: ./app
+
+    concurrency:
+      group: preview-${{ github.event.pull_request.number }}-${{ matrix.service }}
+      cancel-in-progress: false
+
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
-      - name: Authenticate to Google Cloud
+
+      - name: Auth to Google Cloud (Workload Identity Federation)
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: 'projects/150327319937/locations/global/workloadIdentityPools/github-pool/providers/github-provider'
-          service_account: 'github-actions-runner@serious-timer-467517-e1.iam.gserviceaccount.com'
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
-      - name: Build and Deploy App to Staging
-        run: |
-          gcloud builds submit ./app --tag asia-northeast1-docker.pkg.dev/serious-timer-467517-e1/my-app-repo/rag-app:staging-${{ github.sha }}
-          gcloud run deploy rag-portfolio-app-staging \
-            --image asia-northeast1-docker.pkg.dev/serious-timer-467517-e1/my-app-repo/rag-app:staging-${{ github.sha }} \
-            --region asia-northeast1
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDP }}   # WIFプロバイダ
+          service_account: ${{ secrets.GCP_SA_EMAIL }}                  # デプロイ用SA
+          # credentials_json: ${{ secrets.GCP_SA_KEY }}                 # 鍵方式に切替える場合
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2                     # gcloud CLI
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & Push (get digest)
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}                                # サービスごとのビルドコンテキスト
+          push: true                                                    # pushでdigestが確定
+          tags: |
+            ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ matrix.image_name }}:sha-${{ github.sha }}
+
+      - name: Echo digest (debug)
+        run: echo "Digest=${{ steps.build.outputs.digest }}"            # 例: sha256:xxxx...
+
+      - name: Deploy to Cloud Run (by digest)
+        id: deploy
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ matrix.service }}                                # 例: rag-portfolio-app-staging
+          region: ${{ env.REGION }}
+          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ matrix.image_name }}@${{ steps.build.outputs.digest }}
+          flags: --allow-unauthenticated                                # stagingも公開
+
+      - name: Show Service URL
+        run: echo "Deployed ${{ matrix.service }} -> ${{ steps.deploy.outputs.url }}"

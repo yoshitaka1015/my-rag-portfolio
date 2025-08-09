@@ -1,4 +1,6 @@
-# .github/workflows/merge-prod-deploy.yml
+# mainへのpush（=マージ）で本番デプロイ
+# - digest指定の同期デプロイ
+# - prodは公開（未認証アクセス許可）
 
 name: Deploy to Production on Merge
 
@@ -6,9 +8,11 @@ on:
   push:
     branches:
       - main
-    paths:
-      - 'app/**'
-      - 'ocr-function/**'
+
+env:
+  PROJECT_ID: serious-timer-467517-e1
+  REGION: us-central1
+  REPO: rag-portfolio-repo
 
 permissions:
   contents: read
@@ -16,29 +20,58 @@ permissions:
 
 jobs:
   deploy-prod:
-    name: Deploy to Production
+    name: Build, Push (digest) and Deploy to Prod
     runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        include:
+          - service: ocr-function-prod
+            image_name: ocr-function
+            context: ./ocr-function
+          - service: rag-portfolio-app-prod
+            image_name: rag-portfolio-app
+            context: ./app
+
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
-      - name: Authenticate to Google Cloud
+
+      - name: Auth to Google Cloud (Workload Identity Federation)
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: 'projects/150327319937/locations/global/workloadIdentityPools/github-pool/providers/github-provider'
-          service_account: 'github-actions-runner@serious-timer-467517-e1.iam.gserviceaccount.com'
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
-      - name: Build and Deploy Applications
-        run: |
-          # アプリケーションのコンテナをビルド＆プッシュ
-          gcloud builds submit ./app --tag asia-northeast1-docker.pkg.dev/serious-timer-467517-e1/my-app-repo/rag-app:prod-${{ github.sha }}
-          
-          # Cloud Runサービスを新しいイメージで更新
-          gcloud run deploy rag-portfolio-app-prod \
-            --image asia-northeast1-docker.pkg.dev/serious-timer-467517-e1/my-app-repo/rag-app:prod-${{ github.sha }} \
-            --region asia-northeast1 \
-            --service-account rag-app-sa-prod@serious-timer-467517-e1.iam.gserviceaccount.com
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDP }}
+          service_account: ${{ secrets.GCP_SA_EMAIL }}
 
-          # (OCR Functionも同様にビルド＆デプロイ)
-          # gcloud builds submit ./ocr-function ...
-          # gcloud functions deploy ocr-function-prod ...
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & Push (get digest)
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          tags: |
+            ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ matrix.image_name }}:sha-${{ github.sha }}
+
+      - name: Echo digest (debug)
+        run: echo "Digest=${{ steps.build.outputs.digest }}"
+
+      - name: Deploy to Cloud Run (by digest)
+        id: deploy
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ matrix.service }}
+          region: ${{ env.REGION }}
+          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ matrix.image_name }}@${{ steps.build.outputs.digest }}
+          flags: --allow-unauthenticated                                  # prodは公開
+
+      - name: Show Service URL
+        run: echo "Deployed ${{ matrix.service }} -> ${{ steps.deploy.outputs.url }}"

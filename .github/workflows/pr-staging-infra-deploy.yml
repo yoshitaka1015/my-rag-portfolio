@@ -1,62 +1,60 @@
-# .github/workflows/pr-infra-pipeline.yml
+# PR作成/更新でstaging用インフラを適用（Terraform）
+# - workspaceをPR番号で分離
+# - region / project_id を明示で注入
 
 name: Deploy Infrastructure to Staging on PR
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-    paths:
-      - 'terraform/**'
+    branches:
+      - "**"
+
+env:
+  PROJECT_ID: serious-timer-467517-e1
+  REGION: us-central1
 
 permissions:
   contents: read
-  pull-requests: write
   id-token: write
 
 jobs:
   deploy-infra-preview:
-    name: Deploy Infrastructure to Staging
+    name: Terraform Apply (staging infra)
     runs-on: ubuntu-latest
+
+    concurrency:
+      group: tf-staging-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Authenticate to Google Cloud
+      - name: Auth to Google Cloud (Workload Identity Federation)
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: 'projects/150327319937/locations/global/workloadIdentityPools/github-pool/providers/github-provider'
-          service_account: 'github-actions-runner@serious-timer-467517-e1.iam.gserviceaccount.com'
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDP }}
+          service_account: ${{ secrets.GCP_SA_EMAIL }}
 
-      - name: Set up Terraform
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
-
-      - name: Terraform Deploy to Staging
-        run: |
-          cd terraform
-          terraform init -input=false -reconfigure
-          terraform workspace select staging || terraform workspace new staging
-          terraform apply -var-file="staging.tfvars" -auto-approve
-      
-      # --- ▼ここからが修正箇所▼ ---
-
-      # ステップ1: Terraformの出力を取得し、ステップの出力変数に設定する
-      - name: Get Preview URL
-        id: get_url
-        run: |
-          cd terraform
-          echo "app_url=$(terraform output -raw rag_app_url)" >> $GITHUB_OUTPUT
-        
-      # ステップ2: 取得したURLを使って、PRにコメントを投稿する
-      - name: Post Preview URL to PR Comment
-        if: success()
-        uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const url = "${{ steps.get_url.outputs.app_url }}";
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: `🚀 **Infrastructure Preview Deployed!**\n\nAccess it here: ${url}`
-            });
+          terraform_version: 1.7.5
+
+      - name: Terraform Init
+        run: terraform -chdir=terraform init -input=false
+
+      - name: Select or Create Workspace (per PR)
+        run: |
+          terraform -chdir=terraform workspace select pr-${{ github.event.pull_request.number }} \
+          || terraform -chdir=terraform workspace new pr-${{ github.event.pull_request.number }}
+
+      - name: Terraform Plan
+        run: terraform -chdir=terraform plan -input=false -var="region=${{ env.REGION }}" -var="project_id=${{ env.PROJECT_ID }}"
+
+      - name: Terraform Apply
+        run: terraform -chdir=terraform apply -auto-approve -input=false -var="region=${{ env.REGION }}" -var="project_id=${{ env.PROJECT_ID }}"
