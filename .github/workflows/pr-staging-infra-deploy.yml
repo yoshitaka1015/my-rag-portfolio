@@ -2,7 +2,7 @@
 # - WIFでGCP認証
 # - Workspaceは 'prod' を固定
 # - us-central1 / serious-timer-467517-e1 に統一
-# - environment=prod を明示
+# - environment=prod を明示する
 
 name: Deploy Infrastructure to Production on Merge
 
