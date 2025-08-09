@@ -1,9 +1,8 @@
-# PRがCloseされたとき、該当PR用Workspaceをdestroyするワークフロー
-# - WIFでGCPに認証
-# - pr-<番号> のWorkspaceを選択して破棄
-# - 後処理でWorkspaceを削除
+# PRクローズ時に、当該PR用Workspaceをdestroyする
+# - WIF認証
+# - pr-<番号> のWorkspaceを選択→destroy→削除
 
-name: Destroy Preview Environment on PR Close
+name: Destroy Preview Infra on PR Close
 
 on:
   pull_request:
@@ -42,15 +41,14 @@ jobs:
         run: terraform -chdir=terraform init -input=false -reconfigure
 
       - name: Select Workspace
-        run: |
-          terraform -chdir=terraform workspace select pr-${{ github.event.pull_request.number }} || exit 0
+        run: terraform -chdir=terraform workspace select pr-${{ github.event.pull_request.number }} || exit 0
 
       - name: Destroy
         run: |
           terraform -chdir=terraform destroy -auto-approve \
             -var="project_id=${{ env.PROJECT_ID }}" \
             -var="region=${{ env.REGION }}" \
-            -var-file="staging.tfvars" || true
+            -var="environment=staging" || true
 
       - name: Cleanup Workspace
         run: |

@@ -10,13 +10,8 @@
 #####################
 locals {
   # 環境サフィックス付きバケット名（例: xxx-staging / xxx-prod）
-  source_bucket = var.environment == "staging"
-    ? "${var.source_bucket_name}-staging"
-    : "${var.source_bucket_name}-prod"
-
-  output_bucket = var.environment == "staging"
-    ? "${var.output_bucket_name}-staging"
-    : "${var.output_bucket_name}-prod"
+  source_bucket = var.environment == "staging" ? "${var.source_bucket_name}-staging" : "${var.source_bucket_name}-prod"
+  output_bucket = var.environment == "staging" ? "${var.output_bucket_name}-staging" : "${var.output_bucket_name}-prod"
 
   # Cloud Run 実行サービスアカウント（既存 SA を想定）
   # 例: rag-app-sa-staging@<project>.iam.gserviceaccount.com
