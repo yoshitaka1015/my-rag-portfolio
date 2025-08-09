@@ -1,32 +1,32 @@
-# 変数定義（環境差分はここで管理）
+# 変数定義（環境差分は environment で切り替える）
 
 variable "project_id" {
   type        = string
-  description = "GCPのプロジェクトID"
+  description = "GCP のプロジェクト ID"
   default     = "serious-timer-467517-e1"
 }
 
 variable "region" {
   type        = string
-  description = "GCPのリージョン"
+  description = "GCP のリージョン（Cloud Run / Eventarc など）"
   default     = "us-central1"
 }
 
 variable "source_bucket_name" {
   type        = string
-  description = "OCR入力用バケットの基本名"
+  description = "OCR 入力用バケットのベース名（環境サフィックスは自動付与）"
   default     = "bkt-serious-timer-467517-e1-rag-source"
 }
 
 variable "output_bucket_name" {
   type        = string
-  description = "OCR出力用バケットの基本名"
+  description = "OCR 出力 / ベクトルデータ用バケットのベース名（環境サフィックスは自動付与）"
   default     = "bkt-serious-timer-467517-e1-rag-output"
 }
 
 variable "function_name" {
   type        = string
-  description = "OCR用Cloud Functionの基本名"
+  description = "OCR 用 Cloud Run サービスのベース名"
   default     = "ocr-function"
 }
 
