@@ -36,8 +36,8 @@ jobs:
       - name: Install Dev Dependencies
         run: |
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-          # if [ -f app/requirements.txt ]; then pip install -r app/requirements.txt; fi
-          # if [ -f ocr-function/requirements.txt ]; then pip install -r ocr-function/requirements.txt; fi
+          if [ -f app/requirements.txt ]; then pip install -r app/requirements.txt; fi
+          if [ -f ocr-function/requirements.txt ]; then pip install -r ocr-function/requirements.txt; fi
 
       - name: PyTest
         run: |
