@@ -25,7 +25,7 @@ variable "vector_bucket_name" {
   default     = ""
 }
 
-# Artifact Registry のリポジトリ名（コンテナ格納先）
+# Artifact Registry のリポジトリ名（コンテナ格納先） 
 variable "artifact_repo" {
   type        = string
   description = "Artifact Registry repository name"

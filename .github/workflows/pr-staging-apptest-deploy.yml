@@ -8,7 +8,7 @@ on:
       - 'app/**'
       - 'ocr-function/**'
       - '.github/workflows/pr-staging-apptest-deploy.yml'
-  workflow_dispatch: {}  # 手動実行も許可
+  workflow_dispatch: {}  # 手動実行も許可 
 
 permissions:
   contents: read
