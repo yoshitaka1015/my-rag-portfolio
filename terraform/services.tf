@@ -1,6 +1,6 @@
-# Cloud Run と関連IAM、GCS IAM を環境別に管理する。
-# - ここではプロジェクトレベルのAPI有効化やProject IAMは扱わない（権限要求が強いため）。
-# - コンテナイメージはTerraform側では固定タグ(:initial)を参照し、CD側がdigestで更新。
+# Cloud Run と関連 IAM、GCS IAM を環境別に管理する。
+# - プロジェクトレベルの API 有効化や Project IAM はここでは扱わない。
+# - コンテナイメージは Terraform 側では固定タグ (:initial) を参照し、CD 側が digest で更新する。
 #   ドリフトは lifecycle.ignore_changes で吸収する。
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -17,7 +17,7 @@ locals {
   # ベクトル/出力バケット名：未指定なら規約名で補完
   vector_bucket = var.vector_bucket_name != "" ? var.vector_bucket_name : "bkt-${var.project_id}-rag-output-${var.environment}"
 
-  # Artifact Registry のイメージ参照（Terraform側は固定タグ、CDがdigestで更新）
+  # Artifact Registry のイメージ参照（Terraform側は固定タグ、CD が digest で更新）
   rag_image = "${var.region}-docker.pkg.dev/${var.project_id}/${var.artifact_repo}/rag-portfolio-app:initial"
   ocr_image = "${var.region}-docker.pkg.dev/${var.project_id}/${var.artifact_repo}/ocr-function:initial"
 }
@@ -34,18 +34,29 @@ resource "google_cloud_run_v2_service" "rag_app" {
     service_account = local.rag_sa_email
 
     containers {
-      # Terraformでは固定タグを保持。CDがdigestを反映する。
+      # Terraform では固定タグを保持。CD が digest を反映する。
       image = local.rag_image
 
       # 基本ENV
-      env { name = "REGION"      value = var.region }
-      env { name = "GCP_PROJECT" value = var.project_id }
+      env {
+        name  = "REGION"
+        value = var.region
+      }
+      env {
+        name  = "GCP_PROJECT"
+        value = var.project_id
+      }
 
       # RAGアプリが参照するベクトルデータ（jsonl）置き場
-      env { name = "VECTOR_BUCKET_NAME" value = local.vector_bucket }
+      env {
+        name  = "VECTOR_BUCKET_NAME"
+        value = local.vector_bucket
+      }
 
-      # アプリのHTTPポート（既定 8080）
-      ports { container_port = 8080 }
+      # アプリの HTTP ポート（既定 8080）
+      ports {
+        container_port = 8080
+      }
     }
 
     # スケール設定
@@ -58,17 +69,17 @@ resource "google_cloud_run_v2_service" "rag_app" {
   # 全世界から到達可能
   ingress = "INGRESS_TRAFFIC_ALL"
 
-  # CDが更新するdigestや付帯ラベル等のドリフトを無視
+  # CD が更新する digest や付帯ラベル等のドリフトを無視
   lifecycle {
     ignore_changes = [
-      template[0].containers[0].image,  # CDがdigest指定で更新
+      template[0].containers[0].image,  # CD が digest 指定で更新
       template[0].labels,               # managed-by, commit-sha など
-      client, client_version            # gcloudデプロイ時の付帯情報
+      client, client_version            # gcloud デプロイ時の付帯情報
     ]
   }
 }
 
-# 誰でもinvoke可能にする公開IAM
+# 誰でも invoke 可能にする公開 IAM
 resource "google_cloud_run_v2_service_iam_member" "rag_app_public" {
   project  = var.project_id
   location = var.region
@@ -85,20 +96,31 @@ resource "google_cloud_run_v2_service" "ocr_function" {
   location = var.region
 
   template {
-    # 実行サービスアカウント（RAGと共通SAを想定）
+    # 実行サービスアカウント（RAG と共通 SA を想定）
     service_account = local.rag_sa_email
 
     containers {
       image = local.ocr_image
 
-      # 基本ENV
-      env { name = "REGION"      value = var.region }
-      env { name = "GCP_PROJECT" value = var.project_id }
+      # 共通ENV
+      env {
+        name  = "REGION"
+        value = var.region
+      }
+      env {
+        name  = "GCP_PROJECT"
+        value = var.project_id
+      }
 
-      # OCRが書き出す出力先（RAGと同一バケットを使う運用）
-      env { name = "OUTPUT_BUCKET_NAME" value = local.vector_bucket }
+      # OCR が書き出す出力先（RAG と同一バケットを使う運用）
+      env {
+        name  = "OUTPUT_BUCKET_NAME"
+        value = local.vector_bucket
+      }
 
-      ports { container_port = 8080 }
+      ports {
+        container_port = 8080
+      }
     }
 
     scaling {
@@ -127,7 +149,7 @@ resource "google_cloud_run_v2_service_iam_member" "ocr_public" {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# GCS: RAG アプリの実行SAへ、ベクトル/出力バケットの閲覧権限を付与（加算）
+# GCS: RAG アプリの実行 SA へ、ベクトル/出力バケットの閲覧権限を付与（加算）
 # ─────────────────────────────────────────────────────────────────────────────
 resource "google_storage_bucket_iam_member" "output_viewer_for_rag_app" {
   bucket = local.vector_bucket
@@ -136,7 +158,7 @@ resource "google_storage_bucket_iam_member" "output_viewer_for_rag_app" {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 出力（履歴でURL確認用）※ outputs.tf は廃止し、ここへ統合
+# 出力（履歴で URL 確認用）※ outputs.tf は廃止し、ここへ統合
 # ─────────────────────────────────────────────────────────────────────────────
 output "rag_app_url" {
   value       = google_cloud_run_v2_service.rag_app.uri
