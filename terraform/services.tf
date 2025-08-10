@@ -1,144 +1,149 @@
-# Cloud Run（RAG アプリ / OCR コンテナ）と付帯 IAM を 1 ファイルに統合
-# - RAG アプリに VECTOR_BUCKET_NAME を注入（.jsonl の参照先）
-# - OCR に OUTPUT_BUCKET_NAME を注入（.jsonl の出力先）
-# - RAG アプリの実行 SA に出力バケットの閲覧権限（storage.objectViewer）を付与
-# - 両サービスとも公開（roles/run.invoker を allUsers へ付与）
-# - 初期イメージは "initial" タグ。実運用は CI/CD で digest へ更新する想定
+# Cloud Run と関連IAM、GCS IAM を環境別に管理する。
+# - ここではプロジェクトレベルのAPI有効化やProject IAMは扱わない（権限要求が強いため）。
+# - コンテナイメージはTerraform側では固定タグ(:initial)を参照し、CD側がdigestで更新。
+#   ドリフトは lifecycle.ignore_changes で吸収する。
 
-#####################
-# 派生値（locals）
-#####################
+# ─────────────────────────────────────────────────────────────────────────────
+# 共通ローカル値（命名・既定値）
+# ─────────────────────────────────────────────────────────────────────────────
 locals {
-  # 環境サフィックス付きバケット名（例: xxx-staging / xxx-prod）
-  source_bucket = var.environment == "staging" ? "${var.source_bucket_name}-staging" : "${var.source_bucket_name}-prod"
-  output_bucket = var.environment == "staging" ? "${var.output_bucket_name}-staging" : "${var.output_bucket_name}-prod"
+  # サービス名は <name>-<environment>
+  rag_service_name = "rag-portfolio-app-${var.environment}"
+  ocr_service_name = "ocr-function-${var.environment}"
 
-  # Cloud Run 実行サービスアカウント（既存 SA を想定）
-  # 例: rag-app-sa-staging@<project>.iam.gserviceaccount.com
-  rag_app_sa_email = "rag-app-sa-${var.environment}@${var.project_id}.iam.gserviceaccount.com"
+  # 実行サービスアカウント（既存前提）
+  rag_sa_email = "rag-app-sa-${var.environment}@${var.project_id}.iam.gserviceaccount.com"
+
+  # ベクトル/出力バケット名：未指定なら規約名で補完
+  vector_bucket = var.vector_bucket_name != "" ? var.vector_bucket_name : "bkt-${var.project_id}-rag-output-${var.environment}"
+
+  # Artifact Registry のイメージ参照（Terraform側は固定タグ、CDがdigestで更新）
+  rag_image = "${var.region}-docker.pkg.dev/${var.project_id}/${var.artifact_repo}/rag-portfolio-app:initial"
+  ocr_image = "${var.region}-docker.pkg.dev/${var.project_id}/${var.artifact_repo}/ocr-function:initial"
 }
 
-################################
-# RAG アプリ（Streamlit）Cloud Run
-################################
+# ─────────────────────────────────────────────────────────────────────────────
+# Cloud Run: RAG Web アプリ（公開）
+# ─────────────────────────────────────────────────────────────────────────────
 resource "google_cloud_run_v2_service" "rag_app" {
-  name     = "rag-portfolio-app-${var.environment}"
+  name     = local.rag_service_name
   location = var.region
 
   template {
-    service_account = local.rag_app_sa_email
+    # 実行サービスアカウント
+    service_account = local.rag_sa_email
 
     containers {
-      # 初期イメージ（CI が digest で上書き）
-      image = "us-central1-docker.pkg.dev/${var.project_id}/rag-portfolio-repo/rag-portfolio-app:initial"
+      # Terraformでは固定タグを保持。CDがdigestを反映する。
+      image = local.rag_image
 
-      ports {
-        container_port = 8080
-      }
+      # 基本ENV
+      env { name = "REGION"      value = var.region }
+      env { name = "GCP_PROJECT" value = var.project_id }
 
-      # 画面が参照するベクトルデータの保存先
-      env {
-        name  = "VECTOR_BUCKET_NAME"
-        value = local.output_bucket
-      }
+      # RAGアプリが参照するベクトルデータ（jsonl）置き場
+      env { name = "VECTOR_BUCKET_NAME" value = local.vector_bucket }
 
-      # 一般的に利用する基本情報（将来の拡張用）
-      env {
-        name  = "REGION"
-        value = var.region
-      }
-      env {
-        name  = "GCP_PROJECT"
-        value = var.project_id
-      }
+      # アプリのHTTPポート（既定 8080）
+      ports { container_port = 8080 }
     }
 
-    # オートスケール（必要に応じて調整）
+    # スケール設定
     scaling {
-      min_instance_count = 0
-      max_instance_count = 10
+      min_instance_count = var.min_instance_count
+      max_instance_count = var.max_instance_count
     }
+  }
+
+  # 全世界から到達可能
+  ingress = "INGRESS_TRAFFIC_ALL"
+
+  # CDが更新するdigestや付帯ラベル等のドリフトを無視
+  lifecycle {
+    ignore_changes = [
+      template[0].containers[0].image,  # CDがdigest指定で更新
+      template[0].labels,               # managed-by, commit-sha など
+      client, client_version            # gcloudデプロイ時の付帯情報
+    ]
   }
 }
 
-# RAG アプリを公開
+# 誰でもinvoke可能にする公開IAM
 resource "google_cloud_run_v2_service_iam_member" "rag_app_public" {
+  project  = var.project_id
+  location = var.region
   name     = google_cloud_run_v2_service.rag_app.name
-  location = google_cloud_run_v2_service.rag_app.location
-  project  = google_cloud_run_v2_service.rag_app.project
   role     = "roles/run.invoker"
   member   = "allUsers"
 }
 
-################################
-# OCR コンテナ（Cloud Run）
-################################
+# ─────────────────────────────────────────────────────────────────────────────
+# Cloud Run: OCR（ドキュメント処理）サービス（公開）
+# ─────────────────────────────────────────────────────────────────────────────
 resource "google_cloud_run_v2_service" "ocr_function" {
-  name     = "${var.function_name}-${var.environment}"
+  name     = local.ocr_service_name
   location = var.region
 
   template {
-    service_account = local.rag_app_sa_email
+    # 実行サービスアカウント（RAGと共通SAを想定）
+    service_account = local.rag_sa_email
 
     containers {
-      # 初期イメージ（CI が digest で上書き）
-      image = "us-central1-docker.pkg.dev/${var.project_id}/rag-portfolio-repo/ocr-function:initial"
+      image = local.ocr_image
 
-      ports {
-        container_port = 8080
-      }
+      # 基本ENV
+      env { name = "REGION"      value = var.region }
+      env { name = "GCP_PROJECT" value = var.project_id }
 
-      # OCR の出力先（.jsonl を書き込む先）
-      env {
-        name  = "OUTPUT_BUCKET_NAME"
-        value = local.output_bucket
-      }
+      # OCRが書き出す出力先（RAGと同一バケットを使う運用）
+      env { name = "OUTPUT_BUCKET_NAME" value = local.vector_bucket }
 
-      # 一般的に利用する基本情報
-      env {
-        name  = "GCP_PROJECT"
-        value = var.project_id
-      }
-      env {
-        name  = "REGION"
-        value = var.region
-      }
+      ports { container_port = 8080 }
     }
 
     scaling {
-      min_instance_count = 0
-      max_instance_count = 10
+      min_instance_count = var.min_instance_count
+      max_instance_count = var.max_instance_count
     }
+  }
+
+  ingress = "INGRESS_TRAFFIC_ALL"
+
+  lifecycle {
+    ignore_changes = [
+      template[0].containers[0].image,
+      template[0].labels,
+      client, client_version
+    ]
   }
 }
 
-# OCR を公開（手動実行や疎通確認に使う）
 resource "google_cloud_run_v2_service_iam_member" "ocr_public" {
+  project  = var.project_id
+  location = var.region
   name     = google_cloud_run_v2_service.ocr_function.name
-  location = google_cloud_run_v2_service.ocr_function.location
-  project  = google_cloud_run_v2_service.ocr_function.project
   role     = "roles/run.invoker"
   member   = "allUsers"
 }
 
-################################
-# GCS バケット IAM（RAG アプリ → 出力 .jsonl の閲覧）
-################################
+# ─────────────────────────────────────────────────────────────────────────────
+# GCS: RAG アプリの実行SAへ、ベクトル/出力バケットの閲覧権限を付与（加算）
+# ─────────────────────────────────────────────────────────────────────────────
 resource "google_storage_bucket_iam_member" "output_viewer_for_rag_app" {
-  bucket = local.output_bucket                       # 既存バケット名でも可（リソース管理外でも動作）
+  bucket = local.vector_bucket
   role   = "roles/storage.objectViewer"
-  member = "serviceAccount:${local.rag_app_sa_email}"
+  member = "serviceAccount:${local.rag_sa_email}"
 }
 
-#####################
-# 出力（URL など）
-#####################
+# ─────────────────────────────────────────────────────────────────────────────
+# 出力（履歴でURL確認用）※ outputs.tf は廃止し、ここへ統合
+# ─────────────────────────────────────────────────────────────────────────────
 output "rag_app_url" {
-  description = "RAG アプリ（Cloud Run）の URL"
   value       = google_cloud_run_v2_service.rag_app.uri
+  description = "RAG app (Cloud Run) URL"
 }
 
 output "ocr_function_url" {
-  description = "OCR コンテナ（Cloud Run）の URL"
   value       = google_cloud_run_v2_service.ocr_function.uri
+  description = "OCR function (Cloud Run) URL"
 }

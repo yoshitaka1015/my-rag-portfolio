@@ -2,35 +2,44 @@
 
 variable "project_id" {
   type        = string
-  description = "GCP のプロジェクト ID"
-  default     = "serious-timer-467517-e1"
+  description = "GCP project ID"
 }
 
 variable "region" {
   type        = string
-  description = "GCP のリージョン（Cloud Run / Eventarc など）"
+  description = "GCP region for Cloud Run"
   default     = "us-central1"
 }
 
-variable "source_bucket_name" {
-  type        = string
-  description = "OCR 入力用バケットのベース名（環境サフィックスは自動付与）"
-  default     = "bkt-serious-timer-467517-e1-rag-source"
-}
-
-variable "output_bucket_name" {
-  type        = string
-  description = "OCR 出力 / ベクトルデータ用バケットのベース名（環境サフィックスは自動付与）"
-  default     = "bkt-serious-timer-467517-e1-rag-output"
-}
-
-variable "function_name" {
-  type        = string
-  description = "OCR 用 Cloud Run サービスのベース名"
-  default     = "ocr-function"
-}
-
+# 環境名（例: staging / prod）
 variable "environment" {
   type        = string
-  description = "環境名（例: staging / prod）"
+  description = "Environment name (e.g., staging, prod)"
+}
+
+# ベクトルデータの格納先バケット名。
+# 空のときは 'bkt-<project>-rag-output-<environment>' を自動採用（localsで算出）。
+variable "vector_bucket_name" {
+  type        = string
+  description = "GCS bucket name for vector data (.jsonl)"
+  default     = ""
+}
+
+# Artifact Registry のリポジトリ名（コンテナ格納先）
+variable "artifact_repo" {
+  type        = string
+  description = "Artifact Registry repository name"
+  default     = "rag-portfolio-repo"
+}
+
+# Cloud Run のスケール設定
+variable "min_instance_count" {
+  type        = number
+  description = "Minimum number of Cloud Run instances"
+  default     = 0
+}
+variable "max_instance_count" {
+  type        = number
+  description = "Maximum number of Cloud Run instances"
+  default     = 10
 }
