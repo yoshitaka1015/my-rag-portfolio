@@ -1,6 +1,8 @@
+# ワークフロー名と実行タイトル
 name: pr-staging-infra-deploy.yml
 run-name: "${{ github.workflow }} • ${{ github.ref_name }} • ${{ github.sha }}"
 
+# トリガー: main以外へのpush + 手動実行
 on:
   push:
     branches-ignore:
@@ -10,54 +12,68 @@ on:
       - '.github/workflows/pr-staging-infra-deploy.yml'
   workflow_dispatch: {}
 
+# 権限: コード読み取り & OIDCトークン発行
 permissions:
   contents: read
   id-token: write
 
+# 上位envには“生の値”だけ入れる（ここでenv参照はしない）
 env:
   PROJECT_ID: serious-timer-467517-e1
   REGION: us-central1
-  # Terraform ルート変数（すべての terraform サブコマンドに適用）
-  TF_VAR_project_id: ${{ env.PROJECT_ID }}
-  TF_VAR_region: ${{ env.REGION }}
-  TF_VAR_environment: staging
 
 jobs:
   deploy-infra-staging:
     name: Terraform Apply (staging)
     runs-on: ubuntu-latest
 
+    # 同一ブランチの並列実行を抑止
     concurrency:
       group: tf-stg-${{ github.ref_name }}
       cancel-in-progress: false
 
     steps:
+      # 1) リポジトリをチェックアウト
       - name: Checkout
         uses: actions/checkout@v4
 
+      # 2) GCPにWIFでログイン
       - name: Auth to Google Cloud (WIF)
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDP }}
           service_account: ${{ secrets.GCP_SA_EMAIL }}
 
+      # 3) gcloud をセットアップ
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
 
+      # 4) Terraform をセットアップ
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.7.5
 
+      # 5) Terraform用の環境変数（TF_VAR_*) をエクスポート
+      #    これで以降の全ての terraform サブコマンドに project_id/region/environment が自動で入ります
+      - name: Export Terraform variables (TF_VAR_*)
+        shell: bash
+        run: |
+          echo "TF_VAR_project_id=${PROJECT_ID}" >> "$GITHUB_ENV"
+          echo "TF_VAR_region=${REGION}" >> "$GITHUB_ENV"
+          echo "TF_VAR_environment=staging" >> "$GITHUB_ENV"
+
+      # 6) 初期化（必要プロバイダ取得のため -upgrade ）
       - name: Terraform Init
         run: terraform -chdir=terraform init -input=false -upgrade
 
+      # 7) Workspaceはstaging固定
       - name: Select or Create Workspace (staging)
         run: |
           terraform -chdir=terraform workspace select staging \
             || terraform -chdir=terraform workspace new staging
 
-      # 既存 Cloud Run / IAM を取り込み（存在時のみ）
+      # 8) 既存リソースをstateに取り込み（存在時のみ安全にスキップ）
       - name: Pre-import existing resources
         shell: bash
         env:
@@ -65,15 +81,15 @@ jobs:
           MEMBER_SA: rag-app-sa-staging@serious-timer-467517-e1.iam.gserviceaccount.com
         run: |
           set -e
-          if gcloud run services describe rag-portfolio-app-staging --region "${{ env.REGION }}" --project "${{ env.PROJECT_ID }}" >/dev/null 2>&1; then
+          if gcloud run services describe rag-portfolio-app-staging --region "${REGION}" --project "${PROJECT_ID}" >/dev/null 2>&1; then
             terraform -chdir=terraform import -input=false \
               'google_cloud_run_v2_service.rag_app' \
-              "projects/${{ env.PROJECT_ID }}/locations/${{ env.REGION }}/services/rag-portfolio-app-staging" || true
+              "projects/${PROJECT_ID}/locations/${REGION}/services/rag-portfolio-app-staging" || true
           fi
-          if gcloud run services describe ocr-function-staging --region "${{ env.REGION }}" --project "${{ env.PROJECT_ID }}" >/dev/null 2>&1; then
+          if gcloud run services describe ocr-function-staging --region "${REGION}" --project "${PROJECT_ID}" >/dev/null 2>&1; then
             terraform -chdir=terraform import -input=false \
               'google_cloud_run_v2_service.ocr_function' \
-              "projects/${{ env.PROJECT_ID }}/locations/${{ env.REGION }}/services/ocr-function-staging" || true
+              "projects/${PROJECT_ID}/locations/${REGION}/services/ocr-function-staging" || true
           fi
           if gsutil ls -b "gs://${OUTPUT_BUCKET}" >/dev/null 2>&1; then
             terraform -chdir=terraform import -input=false \
@@ -81,22 +97,17 @@ jobs:
               "${OUTPUT_BUCKET} roles/storage.objectViewer serviceAccount:${MEMBER_SA}" || true
           fi
 
+      # 9) Plan（TF_VAR_*により -var は不要）
       - name: Terraform Plan (staging)
-        run: |
-          terraform -chdir=terraform plan -input=false \
-            -var="project_id=${{ env.PROJECT_ID }}" \
-            -var="region=${{ env.REGION }}" \
-            -var="environment=staging"
+        run: terraform -chdir=terraform plan -input=false
 
+      # 10) Apply
       - name: Terraform Apply (staging)
-        run: |
-          terraform -chdir=terraform apply -auto-approve -input=false \
-            -var="project_id=${{ env.PROJECT_ID }}" \
-            -var="region=${{ env.REGION }}" \
-            -var="environment=staging"
+        run: terraform -chdir=terraform apply -auto-approve -input=false
 
+      # 11) 出力をサマリーへ
       - name: Outputs
         run: |
           terraform -chdir=terraform output -json > tfout.json || true
-          echo '### Terraform Outputs' >> $GITHUB_STEP_SUMMARY
-          cat tfout.json >> $GITHUB_STEP_SUMMARY || true
+          echo '### Terraform Outputs' >> "$GITHUB_STEP_SUMMARY"
+          cat tfout.json >> "$GITHUB_STEP_SUMMARY" || true

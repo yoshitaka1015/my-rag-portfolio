@@ -15,7 +15,6 @@ terraform {
       source  = "hashicorp/archive"
       version = "~> 2.4"
     }
-    # State に time_sleep が残っているので取得が必要
     time = {
       source  = "hashicorp/time"
       version = "~> 0.13"
