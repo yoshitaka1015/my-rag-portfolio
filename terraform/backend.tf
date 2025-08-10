@@ -1,4 +1,5 @@
 # terraform/backend.tf
+# tfstateをCloud Storageに格納するために使う
 
 terraform {
   backend "gcs" {
