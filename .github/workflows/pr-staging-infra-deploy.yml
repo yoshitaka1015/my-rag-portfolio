@@ -2,11 +2,15 @@ name: pr-staging-infra-deploy.yml
 run-name: "${{ github.workflow }} • ${{ github.ref_name }} • ${{ github.sha }}"
 
 on:
+  # main 以外へのPRでも発火（開発ブランチ間PRも可）
   pull_request:
-    types: [opened, synchronize, reopened]
+    branches-ignore:
+      - main
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'terraform/**'
       - '.github/workflows/pr-staging-infra-deploy.yml'
+  # 手動実行も可能
   workflow_dispatch: {}
 
 permissions:
@@ -22,11 +26,22 @@ jobs:
     name: Terraform Apply (staging)
     runs-on: ubuntu-latest
 
+    # フォークPR/DependabotはSecretsが渡らないためスキップ
+    if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.fork == false && github.actor != 'dependabot[bot]') }}
+
+    # 同一ブランチでの多重実行を抑止
     concurrency:
-      group: tf-stg-${{ github.ref_name }}
+      group: tf-stg-${{ github.event.pull_request.head.ref || github.ref_name }}
       cancel-in-progress: false
 
     steps:
+      - name: Debug event context
+        run: |
+          echo "event_name=${{ github.event_name }}"
+          echo "ref_name=${{ github.ref_name }}"
+          echo "pr_base=${{ github.event.pull_request.base.ref || 'N/A' }}"
+          echo "pr_head=${{ github.event.pull_request.head.ref || 'N/A' }}"
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -44,15 +59,15 @@ jobs:
         with:
           terraform_version: 1.7.5
 
-      # 以降の terraform サブコマンドに root 変数を自動適用
+      # 以降の terraform サブコマンドに変数を自動適用（TF_VAR_*）
       - name: Export Terraform variables (TF_VAR_*)
         shell: bash
         run: |
-          echo "TF_VAR_project_id=${PROJECT_ID}" >> "$GITHUB_ENV"
-          echo "TF_VAR_region=${REGION}" >> "$GITHUB_ENV"
-          echo "TF_VAR_environment=staging" >> "$GITHUB_ENV"
-          # vector バケットを明示したい場合は以下を有効化
-          # echo "TF_VAR_vector_bucket_name=bkt-${PROJECT_ID}-rag-output-staging" >> "$GITHUB_ENV"
+          echo "TF_VAR_project_id=${PROJECT_ID}"   >> "$GITHUB_ENV"
+          echo "TF_VAR_region=${REGION}"           >> "$GITHUB_ENV"
+          echo "TF_VAR_environment=staging"        >> "$GITHUB_ENV"
+          echo "TF_VAR_source_bucket_name=bkt-${PROJECT_ID}-rag-resource-staging" >> "$GITHUB_ENV"
+          echo "TF_VAR_output_bucket_name=bkt-${PROJECT_ID}-rag-output-staging"  >> "$GITHUB_ENV"
 
       - name: Terraform Init
         run: terraform -chdir=terraform init -input=false -upgrade
@@ -61,67 +76,6 @@ jobs:
         run: |
           terraform -chdir=terraform workspace select staging \
             || terraform -chdir=terraform workspace new staging
-
-      - name: State cleanup (remove obsolete resources if present)
-        shell: bash
-        run: |
-          set -euo pipefail
-          terraform -chdir=terraform state list > /tmp/tf_state_list.txt || true
-
-          rm_if_present () {
-            local addr="$1"
-            if grep -qx "$addr" /tmp/tf_state_list.txt; then
-              echo "[CLEANUP] terraform state rm $addr"
-              terraform -chdir=terraform state rm "$addr" || true
-            fi
-          }
-
-          # 旧 Cloud Functions（asia-northeast1）・旧Run公開IAM・旧ソースZIP・time_sleep
-          rm_if_present "google_cloudfunctions2_function.ocr_function"
-          rm_if_present "google_cloud_run_v2_service_iam_member.public_invoker"
-          rm_if_present "google_storage_bucket_object.source_zip"
-          rm_if_present "time_sleep.wait_for_iam_propagation"
-
-          # 旧 Project Services / Project IAM（stagingでは管理しない）
-          grep -E '^google_project_service\.apis\[' /tmp/tf_state_list.txt | while read -r addr; do
-            echo "[CLEANUP] terraform state rm $addr"
-            terraform -chdir=terraform state rm "$addr" || true
-          done
-          grep -E '^google_project_iam_member\.' /tmp/tf_state_list.txt | while read -r addr; do
-            echo "[CLEANUP] terraform state rm $addr"
-            terraform -chdir=terraform state rm "$addr" || true
-          done
-
-          # 旧/不要 GCS バケット本体（provider不一致の警告源）
-          rm_if_present "google_storage_bucket.output"
-          rm_if_present "google_storage_bucket.source"
-
-          # 既存SAを壊さないため、管理対象から外す
-          rm_if_present "google_service_account.rag_app_sa"
-
-          # もし rag_app が asia-northeast1 で記録されていたら外す
-          if grep -qx "google_cloud_run_v2_service.rag_app" /tmp/tf_state_list.txt; then
-            if terraform -chdir=terraform state show google_cloud_run_v2_service.rag_app | grep -q "locations/asia-northeast1/"; then
-              echo "[CLEANUP] remove old rag_app (asia-northeast1) from state"
-              terraform -chdir=terraform state rm google_cloud_run_v2_service.rag_app || true
-            fi
-          fi
-
-      # ───── 既存 Cloud Run（us-central1）を state に取り込み ─────
-      - name: Import existing Cloud Run services (us-central1)
-        shell: bash
-        run: |
-          set -e
-          if gcloud run services describe rag-portfolio-app-staging --region "${REGION}" --project "${PROJECT_ID}" >/dev/null 2>&1; then
-            terraform -chdir=terraform import -input=false \
-              'google_cloud_run_v2_service.rag_app' \
-              "projects/${PROJECT_ID}/locations/${REGION}/services/rag-portfolio-app-staging" || true
-          fi
-          if gcloud run services describe ocr-function-staging --region "${REGION}" --project "${PROJECT_ID}" >/dev/null 2>&1; then
-            terraform -chdir=terraform import -input=false \
-              'google_cloud_run_v2_service.ocr_function' \
-              "projects/${PROJECT_ID}/locations/${REGION}/services/ocr-function-staging" || true
-          fi
 
       - name: Terraform Plan (staging)
         run: terraform -chdir=terraform plan -input=false
