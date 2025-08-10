@@ -3,13 +3,12 @@ run-name: "${{ github.workflow }} • ${{ github.ref_name }} • ${{ github.sha 
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
-    branches:
-      - "**"
+    types: [opened, synchronize, reopened, ready_for_review]  # PRにコミットが積まれた時など
     paths:
       - 'app/**'
       - 'ocr-function/**'
       - '.github/workflows/pr-staging-apptest-deploy.yml'
+  workflow_dispatch: {}  # 手動実行も許可
 
 permissions:
   contents: read
@@ -25,7 +24,7 @@ jobs:
   test:
     name: Run Unit Tests
     runs-on: ubuntu-latest
-    # リポジトリ直下をPythonの検索パスに追加
+    # リポジトリ直下をPythonの検索パスに追加（tests から app/ をimportできるようにする）
     env:
       PYTHONPATH: ${{ github.workspace }}
     steps:
@@ -84,9 +83,7 @@ jobs:
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
+      # buildx のセットアップは docker/build-push-action@v5 で内包されるため省略
       - name: Build & Push (get digest)
         id: build
         uses: docker/build-push-action@v5
@@ -95,9 +92,6 @@ jobs:
           push: true                                                      # pushしてdigestを確定
           tags: |
             ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ matrix.image_name }}:sha-${{ github.sha }}
-
-      - name: Echo digest (debug)
-        run: echo "Digest=${{ steps.build.outputs.digest }}"
 
       - name: Deploy to Cloud Run (by digest)
         id: deploy

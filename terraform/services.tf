@@ -28,10 +28,17 @@ locals {
 resource "google_cloud_run_v2_service" "rag_app" {
   name     = local.rag_service_name
   location = var.region
+  project  = var.project_id
 
   template {
     # 実行サービスアカウント
     service_account = local.rag_sa_email
+
+    # リビジョンに付与する論理ラベル（監視・課金分析・検索のため）
+    labels = {
+      app         = "rag-portfolio-app"
+      environment = var.environment
+    }
 
     containers {
       # Terraform では固定タグを保持。CD が digest を反映する。
@@ -71,6 +78,7 @@ resource "google_cloud_run_v2_service" "rag_app" {
 
   # CD が更新する digest や付帯ラベル等のドリフトを無視
   lifecycle {
+    prevent_destroy = true
     ignore_changes = [
       template[0].containers[0].image,  # CD が digest 指定で更新
       template[0].labels,               # managed-by, commit-sha など
@@ -94,10 +102,17 @@ resource "google_cloud_run_v2_service_iam_member" "rag_app_public" {
 resource "google_cloud_run_v2_service" "ocr_function" {
   name     = local.ocr_service_name
   location = var.region
+  project  = var.project_id
 
   template {
     # 実行サービスアカウント（RAG と共通 SA を想定）
     service_account = local.rag_sa_email
+
+    # リビジョンに付与する論理ラベル（監視・課金分析・検索のため）
+    labels = {
+      app         = "ocr-function"
+      environment = var.environment
+    }
 
     containers {
       image = local.ocr_image
@@ -132,6 +147,7 @@ resource "google_cloud_run_v2_service" "ocr_function" {
   ingress = "INGRESS_TRAFFIC_ALL"
 
   lifecycle {
+    prevent_destroy = true
     ignore_changes = [
       template[0].containers[0].image,
       template[0].labels,

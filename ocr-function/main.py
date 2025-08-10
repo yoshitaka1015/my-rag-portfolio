@@ -10,7 +10,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # --- 定数 ---
 PROJECT_ID = os.environ.get('GCP_PROJECT')
-REGION = "us-central1"
+REGION = "asia-northeast1"
 OUTPUT_BUCKET = os.environ.get('OUTPUT_BUCKET_NAME')
 EMBEDDING_MODEL_NAME = "text-embedding-004"
 

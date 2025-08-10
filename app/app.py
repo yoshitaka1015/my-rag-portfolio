@@ -97,7 +97,7 @@ def main():
 
     # --- 3. Streamlit UI ---
     st.set_page_config(page_title="RAG Portfolio", layout="wide")
-    st.title("📄 RAGシステム ポートフォリオ")
+    st.title("RAGシステム ポートフォリオ")
 
     with st.spinner("GCSから知識ベースを読み込み中..."):
         texts, embeddings = load_vectors_from_gcs()
