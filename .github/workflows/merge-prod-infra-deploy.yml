@@ -1,30 +1,24 @@
-name: pr-staging-infra-deploy.yml
+name: merge-prod-infra-deploy.yml
 run-name: "${{ github.workflow }} • ${{ github.ref_name }} • ${{ github.sha }}"
 
 on:
-  push:
-    branches-ignore:
-      - main
-    paths:
-      - 'terraform/**'
-      - '.github/workflows/pr-staging-infra-deploy.yml'
-  workflow_dispatch: {}
+  workflow_dispatch: {}  # 手動実行のみ
 
 permissions:
-  contents: read
-  id-token: write
+  contents: read         # actions/checkout 用
+  id-token: write        # WIF (google-github-actions/auth) 用
 
 env:
   PROJECT_ID: serious-timer-467517-e1
   REGION: us-central1
 
 jobs:
-  deploy-infra-staging:
-    name: Terraform Apply (staging)
+  deploy-infra-prod:
+    name: Terraform Apply (prod)
     runs-on: ubuntu-latest
 
     concurrency:
-      group: tf-stg-${{ github.ref_name }}
+      group: tf-prod
       cancel-in-progress: false
 
     steps:
@@ -45,53 +39,25 @@ jobs:
         with:
           terraform_version: 1.7.5
 
-      # ★ ここを -upgrade に変更：archive プロバイダを取得
       - name: Terraform Init
-        run: |
-          terraform -chdir=terraform init -input=false -upgrade
+        run: terraform -chdir=terraform init -input=false
 
-      - name: Select or Create Workspace (staging)
+      - name: Select or Create Workspace (prod)
         run: |
-          terraform -chdir=terraform workspace select staging \
-            || terraform -chdir=terraform workspace new staging
+          terraform -chdir=terraform workspace select prod \
+          || terraform -chdir=terraform workspace new prod
 
-      # 既存リソース import（必要なら残す。ここは前回渡した内容のままでOK）
-      - name: Pre-import existing resources
-        shell: bash
-        env:
-          OUTPUT_BUCKET: bkt-serious-timer-467517-e1-rag-output-staging
-          MEMBER_SA: rag-app-sa-staging@serious-timer-467517-e1.iam.gserviceaccount.com
-        run: |
-          set -e
-          if gcloud run services describe rag-portfolio-app-staging --region "${{ env.REGION }}" --project "${{ env.PROJECT_ID }}" >/dev/null 2>&1; then
-            terraform -chdir=terraform import -input=false \
-              'google_cloud_run_v2_service.rag_app' \
-              "projects/${{ env.PROJECT_ID }}/locations/${{ env.REGION }}/services/rag-portfolio-app-staging" || true
-          fi
-          if gcloud run services describe ocr-function-staging --region "${{ env.REGION }}" --project "${{ env.PROJECT_ID }}" >/dev/null 2>&1; then
-            terraform -chdir=terraform import -input=false \
-              'google_cloud_run_v2_service.ocr_function' \
-              "projects/${{ env.PROJECT_ID }}/locations/${{ env.REGION }}/services/ocr-function-staging" || true
-          fi
-          if gsutil ls -b "gs://${OUTPUT_BUCKET}" >/dev/null 2>&1; then
-            terraform -chdir=terraform import -input=false \
-              'google_storage_bucket_iam_member.output_viewer_for_rag_app' \
-              "${OUTPUT_BUCKET} roles/storage.objectViewer serviceAccount:${MEMBER_SA}" || true
-          fi
+      - name: Terraform Plan (prod)
+        run: terraform -chdir=terraform plan -input=false \
+          -var="project_id=${{ env.PROJECT_ID }}" \
+          -var="region=${{ env.REGION }}" \
+          -var="environment=prod"
 
-      - name: Terraform Plan (staging)
-        run: |
-          terraform -chdir=terraform plan -input=false \
-            -var="project_id=${{ env.PROJECT_ID }}" \
-            -var="region=${{ env.REGION }}" \
-            -var="environment=staging"
-
-      - name: Terraform Apply (staging)
-        run: |
-          terraform -chdir=terraform apply -auto-approve -input=false \
-            -var="project_id=${{ env.PROJECT_ID }}" \
-            -var="region=${{ env.REGION }}" \
-            -var="environment=staging"
+      - name: Terraform Apply (prod)
+        run: terraform -chdir=terraform apply -auto-approve -input=false \
+          -var="project_id=${{ env.PROJECT_ID }}" \
+          -var="region=${{ env.REGION }}" \
+          -var="environment=prod"
 
       - name: Outputs
         run: |

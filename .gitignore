@@ -2,7 +2,7 @@
 
 # Terraform state files
 terraform.tfstate
-terraform.tfstate.backup
+terraform.tfstate.*
 !prod.tfvars
 !staging.tfvars
 terraform.tfvars
