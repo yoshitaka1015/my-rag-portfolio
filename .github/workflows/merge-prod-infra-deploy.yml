@@ -1,19 +1,12 @@
-# mainへのpushでTerraform（prod）を適用する
-# - WIFでGCP認証
-# - Workspaceは 'prod' を固定
-# - us-central1 / serious-timer-467517-e1 に統一
-# - environment=prod を明示する
+# 本番（prod）は “手動のみ” で適用する
+# - workflow_dispatch で起動
+# - Terraform Workspace は固定で prod
+# - Environments の承認（production）と組み合わせると、誤実行を防げる
 
-name: Deploy Infrastructure to Production on Merge
+name: Deploy Infrastructure to Production (Manual)
 
 on:
-  push:
-    branches-ignore: [ main ]
-    paths:
-      - 'terraform/**'
-      - '.github/workflows/pr-staging-infra-deploy.yml'
-  workflow_dispatch: {}                       # 手動実行
-
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -48,7 +41,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.7.5 
+          terraform_version: 1.7.5
 
       - name: Terraform Init
         run: terraform -chdir=terraform init -input=false
@@ -70,10 +63,8 @@ jobs:
           -var="region=${{ env.REGION }}" \
           -var="environment=prod"
 
-      - name: Output URLs (optional)
-        id: out
-        continue-on-error: true
+      - name: Outputs
         run: |
-          terraform -chdir=terraform output -json > tfout.json
-          cat tfout.json
-
+          terraform -chdir=terraform output -json > tfout.json || true
+          echo '### Terraform Outputs' >> $GITHUB_STEP_SUMMARY
+          cat tfout.json >> $GITHUB_STEP_SUMMARY || true
