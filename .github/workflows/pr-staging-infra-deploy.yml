@@ -63,7 +63,6 @@ jobs:
           terraform -chdir=terraform workspace select staging \
             || terraform -chdir=terraform workspace new staging
 
-      # ───── 旧State掃除（存在する場合のみ安全に除去）─────
       - name: State cleanup (remove obsolete resources if present)
         shell: bash
         run: |
