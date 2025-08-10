@@ -1,8 +1,5 @@
-# PRクローズ時に、当該PR用Workspaceをdestroyする
-# - WIF認証
-# - pr-<番号> のWorkspaceを選択→destroy→削除
-
-name: Destroy Preview Infra on PR Close
+name: pr-staging-destroy.yml
+run-name: "${{ github.workflow }} • ${{ github.ref_name }} • ${{ github.sha }}"
 
 on:
   pull_request:

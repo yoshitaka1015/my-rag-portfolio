@@ -1,9 +1,5 @@
-# 本番アプリ（Cloud Run）を main へのマージ時のみデプロイする
-# - 変更検知は app/** に限定
-# - コンテナは Artifact Registry に push 後、digest 指定でデプロイ
-# - Cloud Run の実行サービスアカウント、リージョン、レポジトリは環境変数で管理
-
-name: Deploy Application to Production on Main Merge
+name: merge-prod-app-deploy.yml
+run-name: "${{ github.workflow }} • ${{ github.ref_name }} • ${{ github.sha }}"
 
 on:
   push:

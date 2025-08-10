@@ -1,9 +1,5 @@
-# 本番（prod）は “手動のみ” で適用する
-# - workflow_dispatch で起動
-# - Terraform Workspace は固定で prod
-# - Environments の承認（production）と組み合わせると、誤実行を防げる
-
-name: Deploy Infrastructure to Production (Manual)
+name: pr-staging-apptest-deploy.yml
+run-name: "${{ github.workflow }} • ${{ github.ref_name }} • ${{ github.sha }}"
 
 on:
   workflow_dispatch: {}
