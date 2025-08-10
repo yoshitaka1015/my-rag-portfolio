@@ -29,7 +29,7 @@ jobs:
     # フォークPR/DependabotはSecretsが渡らないためスキップ
     if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.fork == false && github.actor != 'dependabot[bot]') }}
 
-    # 同一ブランチでの多重実行を抑止
+    # 同一ブランチでの多重実行を抑止 
     concurrency:
       group: tf-stg-${{ github.event.pull_request.head.ref || github.ref_name }}
       cancel-in-progress: false
