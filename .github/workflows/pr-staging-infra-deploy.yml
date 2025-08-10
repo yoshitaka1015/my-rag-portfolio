@@ -17,6 +17,9 @@ permissions:
 env:
   PROJECT_ID: serious-timer-467517-e1
   REGION: us-central1
+  TF_VAR_project_id: ${{ env.PROJECT_ID }}
+  TF_VAR_region: ${{ env.REGION }}
+  TF_VAR_environment: staging
 
 jobs:
   deploy-infra-staging:
@@ -49,7 +52,7 @@ jobs:
       # Terraform 初期化
       - name: Terraform Init
         run: |
-          terraform -chdir=terraform init -input=false
+          terraform -chdir=terraform init -input=false -upgrade
 
       # Workspace は固定で staging（重複作成を防ぐ）
       - name: Select or Create Workspace (staging)
