@@ -9,7 +9,6 @@ on:
     paths:
       - 'terraform/**'
       - '.github/workflows/pr-staging-infra-deploy.yml'
-  workflow_dispatch: {}
 
 permissions:
   contents: read
