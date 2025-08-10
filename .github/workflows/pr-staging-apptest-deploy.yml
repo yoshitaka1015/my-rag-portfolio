@@ -2,10 +2,14 @@ name: pr-staging-apptest-deploy.yml
 run-name: "${{ github.workflow }} • ${{ github.ref_name }} • ${{ github.sha }}"
 
 on:
-  push:
+  pull_request:
     types: [opened, synchronize, reopened]
     branches:
       - "**"
+    paths:
+      - 'app/**'
+      - 'ocr-function/**'
+      - '.github/workflows/pr-staging-apptest-deploy.yml'
 
 permissions:
   contents: read
