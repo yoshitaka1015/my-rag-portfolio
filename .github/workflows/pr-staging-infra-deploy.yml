@@ -1,19 +1,13 @@
-# mainへのpushでTerraform（prod）を適用する
-# - WIFでGCP認証
-# - Workspaceは 'prod' を固定
-# - us-central1 / serious-timer-467517-e1 に統一
-# - environment=prod を明示する
-
-name: Deploy Infrastructure to Production on Merge
+name: Deploy Infrastructure to Staging on Branch Push
 
 on:
   push:
-    branches-ignore: [ main ]
+    branches-ignore:
+      - main                          # main 以外への push で起動
     paths:
-      - 'terraform/**'
+      - 'terraform/**'                # terraform 配下の変更時のみ
       - '.github/workflows/pr-staging-infra-deploy.yml'
-  workflow_dispatch: {}                       # 手動実行
-
+  workflow_dispatch: {}               # 手動実行も可
 
 permissions:
   contents: read
@@ -24,18 +18,19 @@ env:
   REGION: us-central1
 
 jobs:
-  deploy-infra-prod:
-    name: Terraform Apply (prod)
+  deploy-infra-staging:
+    name: Terraform Apply (staging)
     runs-on: ubuntu-latest
 
     concurrency:
-      group: tf-prod
+      group: tf-stg-${{ github.ref_name }}
       cancel-in-progress: false
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # WIF で GCP 認証
       - name: Auth to Google Cloud (WIF)
         uses: google-github-actions/auth@v2
         with:
@@ -48,32 +43,42 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.7.5 
+          terraform_version: 1.7.5
 
+      # Terraform 初期化（-chdir はグローバルオプション）
       - name: Terraform Init
-        run: terraform -chdir=terraform init -input=false
-
-      - name: Select or Create Workspace (prod)
         run: |
-          terraform -chdir=terraform workspace select prod \
-          || terraform -chdir=terraform workspace new prod
+          terraform -chdir=terraform init -input=false
 
-      - name: Terraform Plan (prod)
-        run: terraform -chdir=terraform plan -input=false \
-          -var="project_id=${{ env.PROJECT_ID }}" \
-          -var="region=${{ env.REGION }}" \
-          -var="environment=prod"
-
-      - name: Terraform Apply (prod)
-        run: terraform -chdir=terraform apply -auto-approve -input=false \
-          -var="project_id=${{ env.PROJECT_ID }}" \
-          -var="region=${{ env.REGION }}" \
-          -var="environment=prod"
-
-      - name: Output URLs (optional)
-        id: out
-        continue-on-error: true
+      # Workspace をブランチ名で分離（"/" を "-" に置換）
+      - name: Select or Create Workspace (staging)
+        shell: bash
         run: |
-          terraform -chdir=terraform output -json > tfout.json
-          cat tfout.json
+          BR="${GITHUB_REF_NAME//\//-}"
+          NAME="br-${BR}"
+          echo "WORKSPACE=$NAME" >> $GITHUB_ENV
+          terraform -chdir=terraform workspace select "$NAME" \
+            || terraform -chdir=terraform workspace new "$NAME"
 
+      # Plan（行継続は行末の \ で正しく記述）
+      - name: Terraform Plan (staging)
+        run: |
+          terraform -chdir=terraform plan -input=false \
+            -var="project_id=${{ env.PROJECT_ID }}" \
+            -var="region=${{ env.REGION }}" \
+            -var="environment=staging"
+
+      # Apply
+      - name: Terraform Apply (staging)
+        run: |
+          terraform -chdir=terraform apply -auto-approve -input=false \
+            -var="project_id=${{ env.PROJECT_ID }}" \
+            -var="region=${{ env.REGION }}" \
+            -var="environment=staging"
+
+      # 出力（URL などが定義されていれば表示）
+      - name: Outputs
+        run: |
+          terraform -chdir=terraform output -json > tfout.json || true
+          echo '### Terraform Outputs' >> $GITHUB_STEP_SUMMARY
+          cat tfout.json >> $GITHUB_STEP_SUMMARY || true

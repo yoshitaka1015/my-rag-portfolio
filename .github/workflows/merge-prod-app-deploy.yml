@@ -1,0 +1,88 @@
+# 本番アプリ（Cloud Run）を main へのマージ時のみデプロイする
+# - 変更検知は app/** に限定
+# - コンテナは Artifact Registry に push 後、digest 指定でデプロイ
+# - Cloud Run の実行サービスアカウント、リージョン、レポジトリは環境変数で管理
+
+name: Deploy Application to Production on Main Merge
+
+on:
+  push:
+    branches:
+      - main                           # 本番は main へのマージのみ
+    paths:
+      - 'app/**'                       # アプリ配下の変更時にのみ実行
+      - '.github/workflows/merge-prod-app-deploy.yml'  # ワークフロー変更時の自己検証
+
+  # 任意: 手動実行を許可する場合は有効化
+  workflow_dispatch: {}
+
+permissions:
+  contents: read        # actions/checkout 用
+  id-token: write       # google-github-actions/auth (WIF) 用
+
+env:
+  PROJECT_ID: serious-timer-467517-e1
+  REGION: us-central1
+  REPO: rag-portfolio-repo            # Artifact Registry リポジトリ名
+  SERVICE_NAME: rag-portfolio-app-prod
+  IMAGE_NAME: rag-portfolio-app
+  RUNTIME_SA_PROD: rag-app-sa-prod@serious-timer-467517-e1.iam.gserviceaccount.com
+  PROD_VECTOR_BUCKET: bkt-serious-timer-467517-e1-rag-output-prod
+
+jobs:
+  build-and-deploy:
+    name: Build image and Deploy to Cloud Run (prod)
+    runs-on: ubuntu-latest
+    concurrency:
+      group: prod-app-deploy
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Workload Identity Federation でGCPに認証する
+      - name: Auth to Google Cloud (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDP }}
+          service_account: ${{ secrets.GCP_SA_EMAIL }}
+
+      # gcloud CLI をセットアップ
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      # Artifact Registry への Docker 認証を有効化
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      # Buildx を有効化（安定したビルド用）
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # コンテキスト app/ をビルドして push、digest を取得
+      - name: Build & Push image (get digest)
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ./app                                # アプリの Docker コンテキスト
+          push: true                                   # Artifact Registry へ push
+          tags: |
+            ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+
+      # 取得した digest を用いて Cloud Run へ同期デプロイ
+      - name: Deploy to Cloud Run by digest
+        id: deploy
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.SERVICE_NAME }}
+          region: ${{ env.REGION }}
+          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          flags: >
+            --allow-unauthenticated
+            --service-account=${{ env.RUNTIME_SA_PROD }}
+            --update-env-vars=VECTOR_BUCKET_NAME=${{ env.PROD_VECTOR_BUCKET }}
+
+      # 成果物のURLをログに出す
+      - name: Show Service URL
+        run: echo "Deployed ${{ env.SERVICE_NAME }} -> ${{ steps.deploy.outputs.url }}"
