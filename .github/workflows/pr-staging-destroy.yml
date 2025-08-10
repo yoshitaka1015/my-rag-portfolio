@@ -1,53 +1,85 @@
+# .github/workflows/pr-staging-destroy.yml
 name: pr-staging-destroy.yml
 run-name: "${{ github.workflow }} • ${{ github.ref_name }} • ${{ github.sha }}"
 
 on:
+  # PRが closed（merge/close）されたら起動
   pull_request:
     types: [closed]
 
 permissions:
+  # OIDCでのWIF認証に必要
   id-token: write
   contents: read
 
 env:
+  # 破棄対象の固定環境（staging）は us-central1 / 対象プロジェクトに統一
   PROJECT_ID: serious-timer-467517-e1
   REGION: us-central1
 
 jobs:
-  destroy-preview:
+  destroy-staging:
     name: Terraform Destroy (staging)
     runs-on: ubuntu-latest
+
+    # フォークPRやDependabotではSecretsが渡らないためスキップ
     if: ${{ github.event.pull_request.head.repo.fork == false && github.actor != 'dependabot[bot]' }}
 
+    # 同時起動の競合を防止
+    concurrency:
+      group: tf-destroy-staging
+      cancel-in-progress: false
+
     steps:
+      # 対象リポジトリを取得
       - name: Checkout
         uses: actions/checkout@v4
 
+      # GCPへWIF（OIDC）でログイン（Service Accountの鍵不要）
       - name: Auth to Google Cloud (WIF)
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDP }}
           service_account: ${{ secrets.GCP_SA_EMAIL }}
 
+      # gcloud（補助ツール、必要に応じて参照）
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      # Terraformをセットアップ（CIランナーにインストール）
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.7.5
 
+      # Terraformのルート変数を環境変数（TF_VAR_）で全サブコマンドに適用
+      - name: Export Terraform variables (TF_VAR_*)
+        shell: bash
+        run: |
+          echo "TF_VAR_project_id=${PROJECT_ID}"   >> "$GITHUB_ENV"
+          echo "TF_VAR_region=${REGION}"           >> "$GITHUB_ENV"
+          echo "TF_VAR_environment=staging"        >> "$GITHUB_ENV"
+
+      # Providerの取得を確実にするため -upgrade
       - name: Terraform Init
-        run: terraform -chdir=terraform init -input=false -reconfigure
+        run: terraform -chdir=terraform init -input=false -upgrade
 
-      - name: Select Workspace
-        run: terraform -chdir=terraform workspace select pr-${{ github.event.pull_request.number }} || exit 0
-
-      - name: Destroy
+      # stagingワークスペースを選択（無ければ作成）
+      - name: Select or Create Workspace (staging)
         run: |
-          terraform -chdir=terraform destroy -auto-approve \
-            -var="project_id=${{ env.PROJECT_ID }}" \
-            -var="region=${{ env.REGION }}" \
-            -var="environment=staging" || true
+          terraform -chdir=terraform workspace select staging \
+            || terraform -chdir=terraform workspace new staging
 
-      - name: Cleanup Workspace
+      # 破壊プランの確認（ログに何を消すか残す）
+      - name: Terraform Plan (destroy)
+        run: terraform -chdir=terraform plan -destroy -input=false
+
+      # 実際に破棄を実行（staging workspace 配下の管理対象のみ）
+      - name: Terraform Destroy (staging)
+        run: terraform -chdir=terraform destroy -auto-approve -input=false
+
+      # サマリー出力（実行記録を見やすく）
+      - name: Summary
         run: |
-          terraform -chdir=terraform workspace select default || true
-          terraform -chdir=terraform workspace delete -force pr-${{ github.event.pull_request.number }} || true
+          echo '### Terraform Destroy (staging) completed' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Target workspace: `staging`'               >> "$GITHUB_STEP_SUMMARY"
