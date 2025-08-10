@@ -6,6 +6,7 @@ on:
   # PRが closed（merge/close）されたら起動
   pull_request:
     types: [closed]
+  workflow_dispatch: {}
 
 permissions:
   # OIDCでのWIF認証に必要

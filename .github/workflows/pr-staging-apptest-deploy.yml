@@ -2,7 +2,7 @@ name: pr-staging-apptest-deploy.yml
 run-name: "${{ github.workflow }} • ${{ github.ref_name }} • ${{ github.sha }}"
 
 on:
-  pull_request:
+  push:
     types: [opened, synchronize, reopened]
     branches:
       - "**"
