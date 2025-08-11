@@ -6,10 +6,11 @@ on:
     branches:
       - main                           # 本番は main へのマージのみ
     paths:
-      - 'app/**'                       # アプリ配下の変更時にのみ実行
-      - '.github/workflows/merge-prod-app-deploy.yml'  # ワークフロー変更時の自己検証
+      - 'app/**'                       # アプリ配下の変更
+      - 'ocr-function/**'              # OCR 配下の変更
+      - '.github/workflows/merge-prod-app-deploy.yml'  # ワークフロー自体の変更
 
-  # 任意: 手動実行を許可する場合は有効化
+  # 任意: 手動実行を許可
   workflow_dispatch: {}
 
 permissions:
@@ -20,14 +21,18 @@ env:
   PROJECT_ID: serious-timer-467517-e1
   REGION: us-central1
   REPO: rag-portfolio-repo            # Artifact Registry リポジトリ名
-  SERVICE_NAME: rag-portfolio-app-prod
-  IMAGE_NAME: rag-portfolio-app
-  RUNTIME_SA_PROD: rag-app-sa-prod@serious-timer-467517-e1.iam.gserviceaccount.com
-  PROD_VECTOR_BUCKET: bkt-serious-timer-467517-e1-rag-output-prod
+
+  # Cloud Run サービス名
+  APP_SERVICE: rag-portfolio-app-prod
+  OCR_SERVICE: ocr-function-prod
+
+  # Artifact Registry 上のイメージ名
+  APP_IMAGE_NAME: rag-portfolio-app
+  OCR_IMAGE_NAME: ocr-function
 
 jobs:
   build-and-deploy:
-    name: Build image and Deploy to Cloud Run (prod)
+    name: Build images and Deploy to Cloud Run (prod)
     runs-on: ubuntu-latest
     concurrency:
       group: prod-app-deploy
@@ -37,7 +42,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Workload Identity Federation でGCPに認証する
+      # どちら側に差分があるかを判定
+      - name: Detect changes
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            app:
+              - 'app/**'
+            ocr:
+              - 'ocr-function/**'
+
+      # Workload Identity Federation で GCP に認証
       - name: Auth to Google Cloud (WIF)
         uses: google-github-actions/auth@v2
         with:
@@ -52,33 +68,58 @@ jobs:
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
 
-      # Buildx を有効化（安定したビルド用）
+      # 安定したビルドのため Buildx を有効化
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # コンテキスト app/ をビルドして push、digest を取得
-      - name: Build & Push image (get digest)
-        id: build
+      # ───────────── APP: build & deploy ─────────────
+      - name: Build & Push app image
+        if: steps.changes.outputs.app == 'true'
+        id: build_app
         uses: docker/build-push-action@v5
         with:
-          context: ./app                                # アプリの Docker コンテキスト
-          push: true                                   # Artifact Registry へ push
+          context: ./app                         # アプリ用のビルドコンテキスト
+          file: ./app/Dockerfile                 # アプリ用 Dockerfile
+          push: true
           tags: |
-            ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+            ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.APP_IMAGE_NAME }}:sha-${{ github.sha }}
 
-      # 取得した digest を用いて Cloud Run へ同期デプロイ
-      - name: Deploy to Cloud Run by digest
-        id: deploy
+      - name: Deploy APP to Cloud Run by digest
+        if: steps.changes.outputs.app == 'true'
+        id: deploy_app
         uses: google-github-actions/deploy-cloudrun@v2
         with:
-          service: ${{ env.SERVICE_NAME }}
+          service: ${{ env.APP_SERVICE }}
           region: ${{ env.REGION }}
-          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
-          flags: >
-            --allow-unauthenticated
-            --service-account=${{ env.RUNTIME_SA_PROD }}
-            --update-env-vars=VECTOR_BUCKET_NAME=${{ env.PROD_VECTOR_BUCKET }}
+          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.APP_IMAGE_NAME }}@${{ steps.build_app.outputs.digest }}
 
-      # 成果物のURLをログに出す
-      - name: Show Service URL
-        run: echo "Deployed ${{ env.SERVICE_NAME }} -> ${{ steps.deploy.outputs.url }}"
+      # ───────────── OCR: build & deploy ─────────────
+      - name: Build & Push OCR image
+        if: steps.changes.outputs.ocr == 'true'
+        id: build_ocr
+        uses: docker/build-push-action@v5
+        with:
+          context: ./ocr-function                 # OCR 用のビルドコンテキスト
+          file: ./ocr-function/Dockerfile         # OCR 用 Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.OCR_IMAGE_NAME }}:sha-${{ github.sha }}
+
+      - name: Deploy OCR to Cloud Run by digest
+        if: steps.changes.outputs.ocr == 'true'
+        id: deploy_ocr
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.OCR_SERVICE }}
+          region: ${{ env.REGION }}
+          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.OCR_IMAGE_NAME }}@${{ steps.build_ocr.outputs.digest }}
+
+      # 成果物の URL をログに出す（存在するものだけ）
+      - name: Show Service URLs
+        run: |
+          if [ "${{ steps.deploy_app.outcome }}" = "success" ]; then
+            echo "Deployed ${{ env.APP_SERVICE }} -> ${{ steps.deploy_app.outputs.url }}";
+          fi
+          if [ "${{ steps.deploy_ocr.outcome }}" = "success" ]; then
+            echo "Deployed ${{ env.OCR_SERVICE }} -> ${{ steps.deploy_ocr.outputs.url }}";
+          fi

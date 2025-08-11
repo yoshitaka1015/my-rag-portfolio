@@ -80,9 +80,17 @@ resource "google_cloud_run_v2_service" "rag_app" {
   lifecycle {
     prevent_destroy = true
     ignore_changes = [
+      # テンプレート内の“CD側で動く”差分
       template[0].containers[0].image,  # CD が digest 指定で更新
       template[0].labels,               # managed-by, commit-sha など
-      client, client_version            # gcloud デプロイ時の付帯情報
+      template[0].service_account,
+      template[0].containers[0].ports,
+
+      # ルート属性でズレが出やすいもの
+      deletion_protection,
+
+      # gcloud デプロイ時の付帯情報
+      client, client_version
     ]
   }
 }
@@ -151,6 +159,11 @@ resource "google_cloud_run_v2_service" "ocr_function" {
     ignore_changes = [
       template[0].containers[0].image,
       template[0].labels,
+      template[0].service_account,
+      template[0].containers[0].ports,
+
+      deletion_protection,
+
       client, client_version
     ]
   }
@@ -165,12 +178,51 @@ resource "google_cloud_run_v2_service_iam_member" "ocr_public" {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# GCS: ベクトル/出力バケット（prod のみ作成）
+# - staging は既存を import して運用しているため、ここでは prod のみ新規作成に限定
+# - 既定の命名規則：bkt-<project>-rag-output-<environment>
+# ─────────────────────────────────────────────────────────────────────────────
+resource "google_storage_bucket" "vector" {
+  count   = var.environment == "prod" ? 1 : 0
+  name    = local.vector_bucket
+  project = var.project_id
+  location = var.region
+
+  # U B L A を有効化（IAMはバケットレベルで管理）
+  uniform_bucket_level_access = true
+
+  # 明示的に破棄しない運用を基本にする
+  force_destroy = false
+
+  # ここでは最低限の設定に留める（ライフサイクル等は必要になったら追加）
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # GCS: RAG アプリの実行 SA へ、ベクトル/出力バケットの閲覧権限を付与（加算）
 # ─────────────────────────────────────────────────────────────────────────────
 resource "google_storage_bucket_iam_member" "output_viewer_for_rag_app" {
-  bucket = local.vector_bucket
+  bucket = try(google_storage_bucket.vector[0].name, local.vector_bucket)
   role   = "roles/storage.objectViewer"
   member = "serviceAccount:${local.rag_sa_email}"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# IAM: GitHub Actions 実行SA → RAG 実行SA の ActAs（本番のみ）
+# - Cloud Run デプロイ時に、GitHub Actions 側のSAが実行SAを "actAs" できるようにする。
+# - 環境が prod のときだけ適用する（staging では不要）。
+# ─────────────────────────────────────────────────────────────────────────────
+resource "google_service_account_iam_member" "runner_can_actas_rag_sa" {
+  # 対象となる実行サービスアカウント（メールアドレス指定）
+  service_account_id = "projects/${var.project_id}/serviceAccounts/${local.rag_sa_email}"
+
+  # actAs 権限
+  role   = "roles/iam.serviceAccountUser"
+
+  # GitHub Actions 側のデプロイ用サービスアカウント
+  member = "serviceAccount:github-actions-runner@${var.project_id}.iam.gserviceaccount.com"
+
+  # 本番のみ有効化
+  count  = var.environment == "prod" ? 1 : 0
 }
 
 # ─────────────────────────────────────────────────────────────────────────────

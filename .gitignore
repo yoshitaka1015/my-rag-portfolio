@@ -6,6 +6,8 @@ terraform.tfstate.*
 !prod.tfvars
 !staging.tfvars
 terraform.tfvars
+state-backup-*.json
+crash.log
 
 # Terraform local working directory
 .terraform/
