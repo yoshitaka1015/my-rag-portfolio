@@ -1,27 +1,45 @@
-# variable.tf
+# 変数定義（環境差分は environment で切り替える）
+
 variable "project_id" {
   type        = string
-  description = "GCPのプロジェクトID"
+  description = "GCP project ID"
 }
 
 variable "region" {
   type        = string
-  description = "リソースを作成するGCPのリージョン"
-  default     = "asia-northeast1" # asia-northeast1 から変更
+  description = "GCP region for Cloud Run"
+  default     = "us-central1"
 }
 
-variable "source_bucket_name" {
+# 環境名（例: staging / prod）
+variable "environment" {
   type        = string
-  description = "入力用GCSバケットの名前"
+  description = "Environment name (e.g., staging, prod)"
 }
 
-variable "output_bucket_name" {
+# ベクトルデータの格納先バケット名。
+# 空のときは 'bkt-<project>-rag-output-<environment>' を自動採用（localsで算出）。
+variable "vector_bucket_name" {
   type        = string
-  description = "出力用GCSバケットの名前"
+  description = "GCS bucket name for vector data (.jsonl)"
+  default     = ""
 }
 
-variable "function_name" {
+# Artifact Registry のリポジトリ名（コンテナ格納先） 
+variable "artifact_repo" {
   type        = string
-  description = "Cloud Functionの名前"
-  default     = "ocr-function-iac"
+  description = "Artifact Registry repository name"
+  default     = "rag-portfolio-repo"
+}
+
+# Cloud Run のスケール設定
+variable "min_instance_count" {
+  type        = number
+  description = "Minimum number of Cloud Run instances"
+  default     = 0
+}
+variable "max_instance_count" {
+  type        = number
+  description = "Maximum number of Cloud Run instances"
+  default     = 10
 }

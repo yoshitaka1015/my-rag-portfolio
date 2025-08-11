@@ -1,105 +1,165 @@
-# RAGシステム ポートフォリオ (GCP & Vertex AI)
+# RAGシステム ポートフォリオ（GCP & Vertex AI）
 
-## 概要
+## TL;DR（30秒で概要）
+- **何を作ったか**: GCP×Vertex AIで動く **RAG（Retrieval-Augmented Generation）**。PDF等の非構造文書をOCR→分割→ベクトル化し、対話で検索・回答。
+- **なぜこう作ったか**: MVPでは “**最短で価値検証**” を優先。**GCS(JSONL)** をベクトルストアにして外部DB依存を排除し、**IaC(Terraform)** と **CI/CD(GitHub Actions+WIF)** で再現性と変更容易性を担保。
+- **今後の伸ばし方**: **評価駆動**で継続改善。自動評価（Faithfulness/Relavancy）を基盤に、BigQuery Vector SearchやDataflow移行でスケール&高速化。
 
-このプロジェクトは、Google Cloud Platform (GCP) の各種サービスとVertex AIの生成AIモデルを活用して構築した、RAG (Retrieval-Augmented Generation) システムのポートフォリオです。
+---
 
-複雑で検索が困難なドキュメント（例：行政の公開するPDF資料）の内容を、自然言語による対話形式で簡単かつ正確に引き出すことを目的としています。
+## 私の設計思想 / 戦略
+- **計測→学習→改善** のループを最短に：まずMVP→すぐに自動評価を整備→改善の効果を数値で証明。
+- **Simplicity First**：小さく正しく動くことを最優先。複雑さは必要になった瞬間にだけ足す。
+- **No snowflake**：**Terraform**で全てをコード化。**GitHub Actions + Workload Identity Federation** で“鍵を置かない”デプロイ。
+- **変更容易性と安全性の両立**：**digestデプロイ**で順序保証、`prevent_destroy`で誤破壊を防止。
+- **コストと体験のバランス**：デフォルトは **min_instance=0**（節約）。必要に応じて1に切り替え、コールドスタート無し構成へ。
+- **観測可能性**：Cloud Run/Loggingでメトリクス・ログを確認できるよう構成。評価スコアもCIで可視化予定。
 
-## 開発アプローチ：評価駆動型アジャイル開発
+---
 
-本プロジェクトは、**評価駆動型のアジャイル開発**アプローチを採用しています。
-
-まず、システムのコア機能を持つ**MVP（実用最小限の製品）**を迅速に構築しました（フェーズ1）。
-次に、システムの性能（回答精度・速度）を**定量的に自動評価する仕組み**を構築します（フェーズ2）。この評価基盤があることで、将来的な機能改善（例：ベクトル検索の高速化）が、実際にどれほどの効果をもたらしたのかを客観的な数値で証明することが可能になります。
-
-「改善の前に、まず測定の仕組みを作る」というこのアプローチは、データに基づいた継続的なシステム改善を実現するための、意図的な戦略的判断です。そのため、プロンプトのチューニングといった個別の精度改善は、この評価基盤が完成するフェーズ3以降で本格的に着手する計画です。
-
-## アーキテクチャ
+## システム全体像（アーキテクチャ）
 ```mermaid
-graph TD
-    %% === Actor ===
-    User(ユーザー)
+flowchart TD
+  subgraph Dev[CI/CD & IaC]
+    GH[GitHub Actions]--OIDC-->WIF[(Workload Identity<br/>Federation)]
+    WIF-->GCP[Google Cloud]
+    TF[Terraform]
+    GH--deploy-->AR[Artifact Registry]
+  end
 
-    %% === Indexing Pipeline (データ準備) ===
-    subgraph "Indexing Pipeline (データ準備)"
-        direction LR
-        GCS_Source(GCS Source Bucket)
-        CF(Cloud Function <br> OCR, Chunk, Vectorize)
-        VertexAI_Emb(Vertex AI Embedding API)
-        GCS_Output(GCS Vector Store <br> JSONL)
-    end
+  subgraph Index[Indexing Pipeline]
+    SRC[GCS Source Bucket]
+    OCR[Cloud Run: OCR Function]
+    EMB[Vertex AI Embeddings]
+    OUT[GCS Vector Store (JSONL)]
+  end
 
-    %% === Application Pipeline (質問応答) ===
-    subgraph "Application Pipeline (質問応答)"
-        direction LR
-        CloudRun(Cloud Run App <br> Streamlit)
-        VertexAI_LLM(Vertex AI <br> Gemini)
-    end
+  subgraph App[Application Pipeline]
+    APP[Cloud Run: Streamlit App]
+    LLM[Vertex AI Gemini]
+  end
 
-    %% === Connections (Data Flow) ===
-    User -- "PDF/CSVをアップロード" --> GCS_Source
-    GCS_Source -- "イベントをトリガー" --> CF
-    CF -- "テキストを送信" --> VertexAI_Emb
-    VertexAI_Emb -- "ベクトルを返す" --> CF
-    CF -- "テキストとベクトルを保存" --> GCS_Output
+  SRC--Object create-->OCR
+  OCR--Call-->EMB
+  OCR--Write JSONL-->OUT
 
-    %% === Connections (Query Flow) ===
-    User -- "質問を入力" --> CloudRun
-    CloudRun -- "質問をベクトル化" --> VertexAI_Emb
-    CloudRun -- "全ベクトルデータをロード" --> GCS_Output
-    CloudRun -- "検索結果と質問を送信" --> VertexAI_LLM
-    VertexAI_LLM -- "回答を生成" --> CloudRun
-    CloudRun -- "回答を表示" --> User
+  APP--Vectorize Query-->EMB
+  APP--Load Chunks+Vec-->OUT
+  APP--Send context+query-->LLM
+
+  Dev--terraform apply-->Index
+  Dev--terraform apply-->App
 ```
+
+---
+
+## 環境と命名規則
+| 項目 | 値 |
+|---|---|
+| **GCP プロジェクト** | `serious-timer-467517-e1` |
+| **リージョン** | `us-central1`（最新モデル/サービス利用のために統一） |
+| **Artifact Registry** | リポジトリ: `rag-portfolio-repo` |
+| **Cloud Run（staging）** | `ocr-function-staging`, `rag-portfolio-app-staging` |
+| **Cloud Run（prod）** | `ocr-function-prod`, `rag-portfolio-app-prod` |
+| **GCS（staging）** | `bkt-<PROJECT_ID>-rag-resource-staging` / `bkt-<PROJECT_ID>-rag-output-staging` |
+| **GCS（prod）** | `bkt-<PROJECT_ID>-rag-resource-prod` / `bkt-<PROJECT_ID>-rag-output-prod` |
+| **Terraform backend** | GCS: `bkt-<PROJECT_ID>-tfstate`（prefix: `terraform/state`） |
+
+> すべて **IaC** で管理。Cloud Runの **env**（`VECTOR_BUCKET_NAME` / `OUTPUT_BUCKET_NAME` など）もTerraformで宣言。
+
+---
+
+## CI/CD パイプライン（digestデプロイ）
+| Workflow | トリガー | 役割（要約） |
+|---|---|---|
+| `pr-staging-infra-deploy.yml` | `pull_request`（`terraform/**`変更）/ 手動 | stagingインフラを `init→plan→apply`。WIFでGCPへ。|
+| `pr-staging-apptest-deploy.yml` | `pull_request` | アプリのビルド/簡易テスト。必要に応じてプレビュー。|
+| `pr-staging-destroy.yml` | PR close / 手動 | stagingのクリーンアップ（`prevent_destroy` 保護あり）。|
+| `merge-prod-infra-deploy.yml` | 手動のみ | 本番インフラの `plan→apply`。多重実行を `concurrency` で抑止。|
+| `merge-prod-app-deploy.yml` | `main` への push（`app/**`, `ocr-function/**` 変更時） | Build&Push→**digest**で Cloud Run へデプロイ（順序保証/待ち時間ゼロ）。|
+
+**ポイント**
+- `google-github-actions/auth@v2` の **WIF** を使用（秘密鍵を置かない運用）。
+- アプリは **タグ**でpushしつつ、デプロイは **digest** 固定で不変参照。
+
+---
+
+## セキュリティと権限設計
+- **WIF（OIDC）**：Issuer=`https://token.actions.githubusercontent.com`、`attributeCondition` で `repository=='<owner>/<repo>'` を強制。
+- **最小権限**：Actions用SAへ `roles/run.admin` / `roles/artifactregistry.writer` / （必要に応じて）`roles/iam.serviceAccountUser`。
+- **公開設定**：PoC段階のため **staging/prod ともに公開**（`roles/run.invoker`=allUsers）。本番運用では Cloud Armor / IAP / OAuth で段階的に制限可能。
+
+---
+
+## 運用 Runbook（抜粋）
+- **stagingインフラを適用**：PR作成→`pr-staging-infra-deploy` が自動適用。手動でも実行可。
+- **本番インフラ**：`merge-prod-infra-deploy` を **Actionsから手動実行**。
+- **本番アプリ**：`main` にpushすると `merge-prod-app-deploy` が **digestデプロイ**（Cloud RunのリビジョンURLを出力）。
+- **Destroy（staging）**：`pr-staging-destroy` を手動実行。Cloud Runを完全削除する場合は一時的に `prevent_destroy` を外す。
+
+---
+
+## コスト方針（目安の出し方）
+- デフォルトは **`min_instance=0`**（コールドスタート許容で節約）。体験重視時は `1` に変更し、利用状況をみて上下。
+- 実コストの把握は **Cloud Billing レポート**＋**リソース別メトリクス**（Cloud Run / Artifact Registry / GCS）で確認。リビジョン別利用やバケットの転送量をモニタリング。
+
+---
+
+## テスト戦略
+- **ユニット**：アプリの検索ロジック（例：`find_similar_chunks`）。`pytest`＋最小依存（`numpy` など）を固定。
+- **統合**：HTTPでバックエンドを直接叩く簡易テストを追加予定。
+- **自動評価**：RAGAs 等で Faithfulness / Answer Relevancy をCIサマリに可視化予定。
+
+---
+
+## 主要なアーキテクチャ判断（ADRダイジェスト）
+- **ベクトル格納はGCS(JSONL)**：MVPで速度より “**依存とコストの最小化**” を優先。
+- **リージョン統一：`us-central1`**：モデル/サービスの選択肢を最大化。
+- **デプロイは digest 固定**：順序保証・ロールバック容易性・再現性確保。
+- **既存リソースは import してTF管理**：`destroy → 作り直し` ではなく **非破壊で整合**。
+- **公開/非公開の判断**：デモ容易性を優先し全公開。以降は段階的にアクセス制御を導入。
+
+---
 
 ## 開発ロードマップ
 
-### Phase 1: MVP (Minimum Viable Product) の構築
+### Phase 1: MVP（完了）
+- RAGのコア機能（投入→ベクトル化→検索→回答）を最小構成で実装。GCS(JSONL)＋Cloud Runで“最短で価値”。
 
-* **目的**: RAGシステムのコア機能（データ投入→ベクトル化→検索→回答生成）を、IaC (Terraform) を用いて迅速に構築する。
-* **状態**: **完了**
+### Phase 2: CI/CD と自動評価（進行中）
+- GitHub Actionsの整備、ユニット/統合テスト、LLM-as-a-judgeで自動評価。結果をActionsサマリに出力。
 
-MVPの迅速な構築という目標に基づき、このフェーズでは以下の技術選定と設計を意図的に行いました。
+### Phase 3: 性能/拡張性
+- ベクトル検索を **BigQuery Vector Search** へ。データ処理は **Cloud Dataflow** 化。
 
-#### 技術選定の意図
+### Phase 4: 機能拡張
+- リランキング、会話履歴の永続化、UI E2E（Playwright）など。
 
-* **ベクトル検索：GCS上のJSONLファイル + アプリ内検索**
-    * **選定理由**: 外部データベースへの依存をなくし、最もシンプルかつ迅速にRAGのコア検索機能を実現するため。また、小規模なデータ量を扱うMVP段階では、専用データベースの常時稼働コストを回避できる最も安価な構成であるため。
+---
 
-* **データ処理パイプライン：Cloud Function**
-    * **選定理由**: GCSイベントとの連携が標準機能で提供されており、MVPの「ファイルが置かれたら処理する」という要件に最適であるため。また、サーバレスでコスト効率も高い。
+## 再現手順（開発者向けメモ）
+```bash
+# 事前: gcloud CLI / Terraform / Docker を用意
 
-* **デプロイフロー：Terraform + `local-exec`**
-    * **選定理由**: まずはインフラ定義とアプリケーションのデプロイ指示をTerraformに一元化し、手動デプロイを排除して再現性を確保する第一歩として採用。
+# Terraform 初期化（staging）
+cd terraform
+terraform init -reconfigure -upgrade
+terraform workspace select staging || terraform workspace new staging
 
-### Phase 2: CI/CDと自動評価パイプラインの構築
+# 変数（CIと同値）
+export TF_VAR_project_id="serious-timer-467517-e1"
+export TF_VAR_region="us-central1"
+export TF_VAR_environment="staging"
+export TF_VAR_source_bucket_name="bkt-serious-timer-467517-e1-rag-resource-staging"
+export TF_VAR_output_bucket_name="bkt-serious-timer-467517-e1-rag-output-staging"
 
-* **目的**: システムの品質を継続的に担保し、将来の改善効果を客観的に測定するための土台を築く。
-* **主なタスク**:
-    * [ ] **CI/CDパイプラインの構築 (GitHub Actions)**: `main`ブランチへのマージをトリガーに、テスト、コンテナビルド、デプロイを自動化するワークフローを構築する。
-    * [ ] **テスト戦略の導入 (テストピラミッド)**:
-        * **ユニットテスト**: `find_similar_chunks`関数など、個々のロジックが正しく動作することを`pytest`で検証する。
-        * **統合テスト**: UIを介さず、HTTPリクエストを直接送信し、質問応答のバックエンドロジ-ック全体（Vertex AI連携含む）が正常に動作することを検証する。
-    * [ ] **自動評価基盤の構築**:
-        * **評価データセット**: 評価用のFAQ（質問と模範解答のペア）を`evaluation_set.json`としてリポジトリに配置する。
-        * **評価スクリプト (Pytest)**: デプロイ完了後、GitHub Actions上で以下の処理を行う`pytest`テストを実装する。
-            1.  各質問をCloud RunアプリにHTTPリクエストとして送信し、**応答速度**を計測する。
-            2.  **LLM-as-a-judge (審査員としてのLLM)** のアプローチを採用。**RAGAs**フレームワークなどを利用し、生成された回答の**忠実性 (Faithfulness)** や**関連性 (Answer Relevancy)** を自動でスコアリングする。
-    * [ ] **評価結果の可視化**: 評価結果（平均スコア、平均応答時間）をGitHub Actionsの実行結果サマリーに出力する。
+# 既存のCloud Runがある場合は初回のみimport
+terraform import 'google_cloud_run_v2_service.rag_app' \
+  "projects/${TF_VAR_project_id}/locations/${TF_VAR_region}/services/rag-portfolio-app-staging" || true
+terraform import 'google_cloud_run_v2_service.ocr_function' \
+  "projects/${TF_VAR_project_id}/locations/${TF_VAR_region}/services/ocr-function-staging" || true
 
-### Phase 3: データパイプラインの高度化と性能改善
-
-* **目的**: フェーズ2で構築した評価基盤を使い、データパイプラインのボトルネックを解消し、性能（速度・精度・拡張性）を向上させる。改善前後のスコアを比較し、改善効果を定量的に示す。
-* **主なタスク**:
-    * [ ] **ベクトル検索の高速化**: 現在のアプリ内検索から**BigQuery Vector Search**に移行し、応答速度の向上を目指す。
-    * [ ] **データ処理の強化**: 大規模データに対応するため、Cloud Functionを**Cloud Dataflow**パイプラインに置き換える。
-    * [ ] **データ収集の自動化**: Cloud SchedulerとCloud Run JobsによるWebクローラーを実装。
-
-### Phase 4: アプリケーションの機能拡張
-
-* **目的**: RAGシステムとしての完成度をさらに高めるための追加機能を実装する。
-* **主なタスク**:
-    * [ ] **リランキング機能の実装**: 検索精度の向上のため、リランカーモデルを導入。
-    * [ ] **会話履歴の記憶**: Firestoreなどを活用し、対話の文脈を維持。
-    * [ ] **UIテスト (E2E)**: `pytest-playwright`を導入し、ユーザー操作を模倣したブラウザテストを実装する。
+# 差分と適用
+terraform plan -input=false
+terraform apply -auto-approve -input=false
+```

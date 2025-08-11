@@ -2,8 +2,10 @@
 
 # Terraform state files
 terraform.tfstate
-terraform.tfstate.backup
-*.tfvars
+terraform.tfstate.*
+!prod.tfvars
+!staging.tfvars
+terraform.tfvars
 
 # Terraform local working directory
 .terraform/

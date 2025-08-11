@@ -1,0 +1,68 @@
+name: merge-prod-infra-deploy.yml
+run-name: "${{ github.workflow }} • ${{ github.ref_name }} • ${{ github.sha }}"
+
+on:
+  workflow_dispatch: {}  # 手動実行のみ
+
+permissions:
+  contents: read         # actions/checkout 用
+  id-token: write        # WIF (google-github-actions/auth) 用
+
+env:
+  PROJECT_ID: serious-timer-467517-e1
+  REGION: us-central1
+
+jobs:
+  deploy-infra-prod:
+    name: Terraform Apply (prod)
+    runs-on: ubuntu-latest
+
+    concurrency:
+      group: tf-prod
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Auth to Google Cloud (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDP }}
+          service_account: ${{ secrets.GCP_SA_EMAIL }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.5
+
+      # 以降の terraform サブコマンドに変数を自動適用（TF_VAR_*）
+      - name: Export Terraform variables (TF_VAR_*)
+        shell: bash
+        run: |
+          echo "TF_VAR_project_id=${PROJECT_ID}"   >> "$GITHUB_ENV"
+          echo "TF_VAR_region=${REGION}"           >> "$GITHUB_ENV"
+          echo "TF_VAR_environment=prod"           >> "$GITHUB_ENV"
+          # バケット名は命名規則に従い自動算出（必要に応じて書き換え）
+          echo "TF_VAR_source_bucket_name=bkt-${PROJECT_ID}-rag-resource-prod" >> "$GITHUB_ENV"
+          echo "TF_VAR_output_bucket_name=bkt-${PROJECT_ID}-rag-output-prod"  >> "$GITHUB_ENV"
+
+      - name: Terraform Init
+        run: terraform -chdir=terraform init -input=false -upgrade
+
+      - name: Select or Create Workspace (prod)
+        run: |
+          terraform -chdir=terraform workspace select prod \
+            || terraform -chdir=terraform workspace new prod
+
+      - name: Terraform Plan (prod)
+        run: terraform -chdir=terraform plan -input=false
+
+      - name: Terraform Apply (prod)
+        run: terraform -chdir=terraform apply -auto-approve -input=false
+
+      - name: Outputs
+        run: |
+          terraform -chdir=terraform output -json > tfout.json || true
+          echo '### Terraform Outputs' >> "$GITHUB_STEP_SUMMARY"
+          cat tfout.json >> "$GITHUB_STEP_SUMMARY" || true
