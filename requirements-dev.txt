@@ -5,3 +5,45 @@ pytest
 
 # 型チェックツール (品質向上のため)
 mypy
+# requirements-dev.txt
+# 開発/テスト用途で使う依存をまとめます（GitHub Actions でもこれを pip install します）
+
+# --- 実コードのユニットテストで必要なランタイム依存（OCR関数など実ライブラリを使う前提） ---
+numpy
+pandas
+langchain-text-splitters     # import 名は langchain_text_splitters
+pymupdf                      # import 名は fitz
+google-cloud-storage
+reportlab                    # テストでPDF生成に使用
+
+# --- テスト/品質ツール ---
+pytest
+mypy
+# requirements-dev.txt
+#
+# 役割:
+# - 開発/テストで使う依存をまとめた一覧。ローカルの pytest と GitHub Actions のテストジョブがこれを pip install します。
+# - ユニットテストで app/ と document_processor/ の両方のモジュールを import するため、両サービスの“実行時依存”も含みます。
+# - 本番デプロイ用の Docker イメージはこれを使いません（それぞれ app/requirements.txt と document_processor/requirements.txt を使用）。
+#
+# 他ファイルとの違い:
+# - app/requirements.txt            : Streamlit アプリの本番実行に必要な依存のみ（アプリ用 Dockerfile がインストール）
+# - document_processor/requirements.txt   : OCR Cloud Run サービスの本番実行に必要な依存のみ（OCR 用 Dockerfile がインストール）
+# - requirements-dev.txt（このファイル）: 開発/検証用。上記どちらにも入れない “テスト支援系（pytest/mypy など）” と
+#   テストで必要な実行時依存をひとまとめにします。
+#
+# 運用メモ:
+# - バージョンを固定したい場合はここでピン留め（例: numpy==1.26.*）。本番 requirements と整合性が崩れないよう定期的に見直し。
+# - 将来分割したくなったら、ここで `-r app/requirements.txt` / `-r document_processor/requirements.txt` を参照させる運用も可能です。
+
+# --- 実コードのユニットテストで必要なランタイム依存（実ライブラリを使って検証する前提） ---
+numpy
+pandas
+langchain-text-splitters     # import 名は langchain_text_splitters
+pymupdf                      # import 名は fitz
+google-cloud-storage
+reportlab                    # PDF生成のフィクスチャで使用
+
+# --- テスト/品質ツール ---
+pytest
+mypy

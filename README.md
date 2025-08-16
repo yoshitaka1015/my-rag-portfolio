@@ -86,7 +86,7 @@ flowchart TD
 | `pr-staging-apptest-deploy.yml` | `pull_request` | アプリのビルドと軽量テスト |
 | `pr-staging-destroy.yml` | PR close／手動 | staging のクリーンアップ（必要に応じて） |
 | `merge-prod-infra-deploy.yml` | **手動実行のみ** | **本番インフラ**の Plan/Apply（ヒューマンゲート） |
-| `merge-prod-app-deploy.yml` | `main` への push（`app/**`, `ocr-function/**` 変更時） | Build & Push → **digest 指定**で Cloud Run デプロイ |
+| `merge-prod-app-deploy.yml` | `main` への push（`app/**`, `document_processor/**` 変更時） | Build & Push → **digest 指定**で Cloud Run デプロイ |
 
 - 認証は **`google-github-actions/auth@v2` + WIF**。秘密鍵は使いません。
 - イメージの **Push はタグ**、**デプロイは digest 固定**（不変参照で順序/再現性を担保）。

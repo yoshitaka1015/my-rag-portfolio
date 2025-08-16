@@ -6,6 +6,7 @@ terraform.tfstate.*
 !prod.tfvars
 !staging.tfvars
 terraform.tfvars
+state-backup*.json
 
 # Terraform local working directory
 .terraform/
@@ -13,6 +14,7 @@ terraform.tfvars
 
 # Python cache
 __pycache__/
+.pytest_cache
 *.pyc
 *.pyo
 *.pyd
