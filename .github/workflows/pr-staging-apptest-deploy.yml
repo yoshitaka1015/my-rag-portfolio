@@ -6,7 +6,8 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]  # PRにコミットが積まれた時など
     paths:
       - 'app/**'
-      - 'ocr-function/**'
+      - 'document_processor/**'
+      - 'tests/**'
       - '.github/workflows/pr-staging-apptest-deploy.yml'
   workflow_dispatch: {}  # 手動実行も許可 
 
@@ -41,7 +42,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip setuptools wheel
           if [ -f app/requirements.txt ]; then pip install -r app/requirements.txt; fi
-          if [ -f ocr-function/requirements.txt ]; then pip install -r ocr-function/requirements.txt; fi
+          if [ -f document_processor/requirements.txt ]; then pip install -r document_processor/requirements.txt; fi
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
 
       - name: PyTest
@@ -58,7 +59,7 @@ jobs:
         include:
           - service: ocr-function-staging
             image_name: ocr-function
-            context: ./ocr-function
+            context: ./document_processor
           - service: rag-portfolio-app-staging
             image_name: rag-portfolio-app
             context: ./app
