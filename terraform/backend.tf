@@ -3,7 +3,7 @@
 
 terraform {
   backend "gcs" {
-    bucket = "bkt-serious-timer-467517-e1-tfstate"
+    bucket = "tfstate-serious-timer-467517-e1"
     prefix = "terraform/state"
   }
 }

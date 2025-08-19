@@ -165,12 +165,29 @@ resource "google_cloud_run_v2_service_iam_member" "ocr_public" {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# GCS: ベクトル/出力バケット本体（staging は force_destroy = true）
+# ─────────────────────────────────────────────────────────────────────────────
+resource "google_storage_bucket" "vector" {
+  name     = local.vector_bucket
+  project  = var.project_id
+  location                    = "US-CENTRAL1"            # ← 置き換えたい最終の場所
+  storage_class               = "STANDARD"
+  uniform_bucket_level_access = true
+  force_destroy               = var.environment == "staging"
+
+  # 必要であればラベルを付与
+  # labels = { environment = var.environment }
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # GCS: RAG アプリの実行 SA へ、ベクトル/出力バケットの閲覧権限を付与（加算）
 # ─────────────────────────────────────────────────────────────────────────────
 resource "google_storage_bucket_iam_member" "output_viewer_for_rag_app" {
   bucket = local.vector_bucket
   role   = "roles/storage.objectViewer"
   member = "serviceAccount:${local.rag_sa_email}"
+
+  depends_on = [google_storage_bucket.vector]  # ← 明示的に作成順序を保証
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
